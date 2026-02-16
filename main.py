@@ -6,6 +6,7 @@ Supports multiple translation pipelines:
 - direct (default): Direct PDF text replacement using PyMuPDF
 - office/docx: PDF -> Office (auto-detect DOCX/PPTX/XLSX) -> Translate -> PDF
 - xliff: Generate XLIFF format for professional CAT tools
+- cat: PDF -> Office -> Moses/XLIFF format -> Office -> PDF
 
 Two-stage workflow:
   1. extract input.pdf  -> generates layout + translation file
@@ -24,7 +25,9 @@ from pdf_layout.pipelines import (
     create_direct_pdf_pipeline,
     create_office_roundtrip_pipeline,
     create_xliff_pipeline,
+    create_office_cat_pipeline,
     OfficeFormat,
+    CATFormat,
 )
 from pdf_layout.source_detector import (
     detect_source_format,
@@ -44,6 +47,14 @@ PIPELINE_MAP = {
     "2": PipelineType.DOCX_ROUNDTRIP,
     "xliff": PipelineType.XLIFF,
     "3": PipelineType.XLIFF,
+    "cat": PipelineType.OFFICE_CAT,
+    "moses": PipelineType.OFFICE_CAT,
+    "4": PipelineType.OFFICE_CAT,
+}
+
+CAT_FORMAT_MAP = {
+    "moses": CATFormat.MOSES,
+    "xliff": CATFormat.XLIFF,
 }
 
 RENDER_METHOD_MAP = {
@@ -137,6 +148,23 @@ def extract_command(args: argparse.Namespace) -> int:
                 target_language=target_lang,
                 source_language=getattr(args, 'source_language', 'en'),
             )
+        elif pipeline_type == PipelineType.OFFICE_CAT:
+            # Office CAT pipeline with Moses/XLIFF output
+            office_format = OFFICE_FORMAT_MAP.get(
+                getattr(args, 'office_format', 'auto'),
+                OfficeFormat.AUTO
+            )
+            cat_format = CAT_FORMAT_MAP.get(
+                getattr(args, 'cat_format', 'moses'),
+                CATFormat.MOSES
+            )
+            pipeline = create_office_cat_pipeline(
+                target_language=target_lang,
+                source_language=getattr(args, 'source_language', 'en'),
+                office_format=office_format,
+                cat_format=cat_format,
+                encoding=getattr(args, 'encoding', 'utf-8'),
+            )
         else:
             pipeline = create_direct_pdf_pipeline(target_language=target_lang)
         
@@ -216,6 +244,8 @@ def merge_command(args: argparse.Namespace) -> int:
             pipeline_type = PipelineType.DOCX_ROUNDTRIP
         elif stored_pipeline == "xliff":
             pipeline_type = PipelineType.XLIFF
+        elif stored_pipeline == "office_cat":
+            pipeline_type = PipelineType.OFFICE_CAT
         else:
             pipeline_type = PipelineType.DIRECT_PDF
         target_lang = target_lang or layout.get("target_language", "Hindi")
@@ -252,6 +282,21 @@ def merge_command(args: argparse.Namespace) -> int:
             )
         elif pipeline_type == PipelineType.XLIFF:
             pipeline = create_xliff_pipeline(target_language=target_lang)
+        elif pipeline_type == PipelineType.OFFICE_CAT:
+            office_format = OFFICE_FORMAT_MAP.get(
+                getattr(args, 'office_format', 'auto'),
+                OfficeFormat.AUTO
+            )
+            cat_format = CAT_FORMAT_MAP.get(
+                getattr(args, 'cat_format', 'moses'),
+                CATFormat.MOSES
+            )
+            pipeline = create_office_cat_pipeline(
+                target_language=target_lang,
+                office_format=office_format,
+                cat_format=cat_format,
+                encoding=getattr(args, 'encoding', 'utf-8'),
+            )
         else:
             pipeline = create_direct_pdf_pipeline(target_language=target_lang)
         
@@ -325,6 +370,8 @@ def _merge_from_layout(layout_path: Path, args: argparse.Namespace) -> int:
         pipeline_type = PipelineType.DOCX_ROUNDTRIP
     elif stored_pipeline == "xliff":
         pipeline_type = PipelineType.XLIFF
+    elif stored_pipeline == "office_cat":
+        pipeline_type = PipelineType.OFFICE_CAT
     else:
         pipeline_type = PipelineType.DIRECT_PDF
     
@@ -356,6 +403,22 @@ def _merge_from_layout(layout_path: Path, args: argparse.Namespace) -> int:
             )
         elif pipeline_type == PipelineType.XLIFF:
             pipeline = create_xliff_pipeline(target_language=target_lang)
+        elif pipeline_type == PipelineType.OFFICE_CAT:
+            office_format = OFFICE_FORMAT_MAP.get(
+                layout.get("office_format", "auto"),
+                OfficeFormat.AUTO
+            )
+            cat_format = CAT_FORMAT_MAP.get(
+                layout.get("cat_format", "moses"),
+                CATFormat.MOSES
+            )
+            pipeline = create_office_cat_pipeline(
+                target_language=target_lang,
+                source_language=layout.get("source_language", "en"),
+                office_format=office_format,
+                cat_format=cat_format,
+                encoding=layout.get("encoding", "utf-8"),
+            )
         else:
             pipeline = create_direct_pdf_pipeline(target_language=target_lang)
         
@@ -492,6 +555,11 @@ Pipelines:
   direct (1)   Direct PDF text replacement (default, fastest)
   office (2)   PDF -> Office (auto-detect DOCX/PPTX/XLSX) -> Translate -> PDF
   xliff (3)    Generate XLIFF format for CAT tools
+  cat (4)      PDF -> Office -> Moses/XLIFF -> Office -> PDF
+
+CAT Formats (for cat pipeline):
+  moses        Parallel text files (source.txt, target.txt) - line-by-line
+  xliff        XLIFF 1.2 format for professional CAT tools
 
 Workflow:
   1. python main.py extract input.pdf -l Hindi
@@ -540,8 +608,9 @@ Examples:
     info_parser.set_defaults(func=info_command)
     
     # Common options
-    pipeline_help = "Translation pipeline: direct/1 (default), office/docx/2, xliff/3"
+    pipeline_help = "Translation pipeline: direct/1, office/docx/2, xliff/3, cat/moses/4 (default)"
     office_format_help = "Office format: auto (default), docx, pptx, xlsx"
+    cat_format_help = "CAT output format: moses (default), xliff"
     
     # Extract command
     extract_parser = subparsers.add_parser(
@@ -557,8 +626,8 @@ Examples:
     extract_parser.add_argument(
         "--pipeline", "-p",
         type=str,
-        default="direct",
-        choices=["direct", "1", "office", "docx", "2", "xliff", "3"],
+        default="cat",
+        choices=["direct", "1", "office", "docx", "2", "xliff", "3", "cat", "moses", "4"],
         help=pipeline_help,
     )
     extract_parser.add_argument(
@@ -569,10 +638,23 @@ Examples:
         help=office_format_help,
     )
     extract_parser.add_argument(
+        "--cat-format",
+        type=str,
+        default="moses",
+        choices=["moses", "xliff"],
+        help=cat_format_help,
+    )
+    extract_parser.add_argument(
         "--source-language",
         type=str,
         default="en",
         help="Source language code for XLIFF (default: en)",
+    )
+    extract_parser.add_argument(
+        "--encoding",
+        type=str,
+        default="utf-8",
+        help="Text file encoding for Moses/text output (default: utf-8)",
     )
     extract_parser.set_defaults(func=extract_command)
     
@@ -600,7 +682,7 @@ Examples:
         "--pipeline", "-p",
         type=str,
         default="auto",
-        choices=["auto", "direct", "1", "office", "docx", "2", "xliff", "3"],
+        choices=["auto", "direct", "1", "office", "docx", "2", "xliff", "3", "cat", "moses", "4"],
         help="Pipeline (default: auto-detect from layout)",
     )
     merge_parser.add_argument(
@@ -609,6 +691,13 @@ Examples:
         default="auto",
         choices=["auto", "docx", "pptx", "xlsx"],
         help=office_format_help,
+    )
+    merge_parser.add_argument(
+        "--cat-format",
+        type=str,
+        default="moses",
+        choices=["moses", "xliff"],
+        help=cat_format_help,
     )
     merge_parser.add_argument(
         "--min-font-size",
@@ -628,6 +717,12 @@ Examples:
         default="1",
         choices=["1", "line-by-line"],
         help="Text render method for direct pipeline (default: 1)",
+    )
+    merge_parser.add_argument(
+        "--encoding",
+        type=str,
+        default="utf-8",
+        help="Text file encoding for Moses/text output (default: utf-8)",
     )
     merge_parser.set_defaults(func=merge_command)
     

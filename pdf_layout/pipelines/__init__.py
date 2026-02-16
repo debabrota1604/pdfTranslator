@@ -6,6 +6,7 @@ Available pipelines:
 - DocxRoundtripPipeline: PDF → DOCX → translate → DOCX → PDF
 - OfficeRoundtripPipeline: PDF → Office (auto-detect DOCX/PPTX/XLSX) → translate → PDF
 - XLIFFPipeline: Generate XLIFF format for CAT tools
+- OfficeCATpipeline: PDF → Office → Moses/XLIFF → Office → PDF
 
 Office XML Handlers:
 - DocxXMLHandler: Extract/update text in Word documents
@@ -51,6 +52,12 @@ from .xliff_format import (
     XLIFFVersion,
     create_xliff_pipeline,
 )
+from .office_cat import (
+    OfficeCATpipeline,
+    OfficeCATConfig,
+    CATFormat,
+    create_office_cat_pipeline,
+)
 
 
 def create_pipeline(
@@ -85,6 +92,11 @@ def create_pipeline(
             target_language=target_language,
             **kwargs,
         )
+    elif pipeline_type == PipelineType.OFFICE_CAT:
+        return create_office_cat_pipeline(
+            target_language=target_language,
+            **kwargs,
+        )
     else:
         raise ValueError(f"Unknown pipeline type: {pipeline_type}")
 
@@ -109,6 +121,11 @@ __all__ = [
     "OfficeRoundtripConfig",
     "OfficeFormat",
     "create_office_roundtrip_pipeline",
+    # Office CAT (Moses/XLIFF format output)
+    "OfficeCATpipeline",
+    "OfficeCATConfig",
+    "CATFormat",
+    "create_office_cat_pipeline",
     # Office XML Handlers
     "OfficeXMLHandler",
     "DocxXMLHandler",

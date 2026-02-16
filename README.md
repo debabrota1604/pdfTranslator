@@ -30,6 +30,9 @@ pip install PyMuPDF
 # Install optional dependencies for Office pipeline
 pip install pdf2docx python-pptx openpyxl
 
+# Install optional dependencies for CAT pipeline (OASIS XLIFF compliance)
+pip install translate-toolkit
+
 # For Office → PDF conversion, install LibreOffice
 # https://www.libreoffice.org/
 ```
@@ -64,9 +67,11 @@ python main.py extract <input.pdf> [options]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-l, --language` | Hindi | Target language for translation |
-| `-p, --pipeline` | direct | Pipeline: `direct`, `office`, `xliff` |
+| `-p, --pipeline` | cat | Pipeline: `direct`, `office`, `xliff`, `cat` |
 | `--office-format` | auto | Office format: `auto`, `docx`, `pptx`, `xlsx` |
+| `--cat-format` | moses | CAT output: `moses`, `xliff` (for cat pipeline) |
 | `--source-language` | en | Source language code for XLIFF |
+| `--encoding` | utf-8 | Text file encoding for Moses/text output |
 
 **Output files:**
 - `input.pdf_layout.json` - Layout and block data
@@ -83,12 +88,13 @@ python main.py merge <input.pdf> [output.pdf] [options]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-o, --output` | `{input}_translated.pdf` | Output PDF path |
-| `-p, --pipeline` | auto | Auto-detects from layout.json |
+| `-p, --pipeline` | auto | Auto-detects from layout.json (`direct`, `office`, `xliff`, `cat`) |
+| `--encoding` | utf-8 | Text file encoding for Moses/text input |
 | `--min-font-size` | 6.0 | Minimum font size threshold |
 | `--font-step` | 0.5 | Font size reduction step |
 | `--render-method` | 1 | Text render method (line-by-line) |
 
-**Intermediate files (Office pipeline):**
+**Intermediate files (Office/CAT pipeline):**
 The Office pipeline automatically keeps intermediate files:
 - `input.docx` / `input.pptx` / `input.xlsx` - Original converted from PDF
 - `input_translated.docx/pptx/xlsx` - With translations applied
@@ -169,6 +175,42 @@ python main.py extract doc.pdf --pipeline xliff -l German
 # Edit input.pdf.xlf in your CAT tool
 python main.py merge doc.pdf
 ```
+
+### Office CAT Pipeline (Moses/XLIFF)
+PDF → Office → Moses/XLIFF format → Office → PDF.
+
+Best for professional translators using CAT tools or Moses-based MT systems.
+
+```bash
+# Moses format (parallel text files)
+python main.py extract doc.pdf --pipeline cat --cat-format moses -l Spanish
+# Edit *_target.txt (one segment per line)
+python main.py merge doc.pdf
+
+# XLIFF format
+python main.py extract doc.pdf --pipeline cat --cat-format xliff -l French
+# Edit *.xlf in your CAT tool
+python main.py merge doc.pdf
+```
+
+**Moses format output:**
+- `*_source.txt` - Source text (one segment per line)
+- `*_target.txt` - Target text (translate this file)
+- `*_source.mapping.json` - Segment ID mapping
+
+**XLIFF format output:**
+- `*.xlf` - XLIFF 1.2 file (OASIS compliant when translate-toolkit is installed)
+
+**Standards Compliance:**
+XLIFF generation uses [translate-toolkit](https://toolkit.translatehouse.org/) for OASIS XLIFF 1.2 compliance. Install with:
+```bash
+pip install translate-toolkit
+```
+
+Without translate-toolkit, a basic XLIFF implementation is used as fallback.
+
+**Pros:** Industry-standard formats, works with any CAT tool (SDL Trados, memoQ, OmegaT, etc.)
+**Cons:** Requires LibreOffice
 
 ## Translation File Format
 

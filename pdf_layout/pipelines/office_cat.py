@@ -1,26 +1,21 @@
 """
-Office Roundtrip Pipeline - PDF → Office Format → Translate → Office → PDF.
+Office CAT Pipeline - PDF → Office → Moses/XLIFF → Office → PDF.
+
+Combines Office roundtrip conversion with CAT (Computer-Assisted Translation)
+formats for better intermediate representation.
 
 Workflow:
-1. PDF → Office (DOCX/PPTX/XLSX)
-   - DOCX: pdf2docx library (high fidelity conversion)
-   - PPTX/XLSX: Create from PDF text extraction
-   
-2. Extract XML from Office (ZIP with XML inside)
-   - Uses OfficeXMLHandler to parse document.xml, slides, sheets
-   
-3. Generate translation file with tagged text
-   
-4. Apply translations to XML and repack Office file
-
+1. PDF → Office (DOCX/PPTX/XLSX) using pdf2docx/python-pptx/openpyxl
+2. Extract text from Office XML
+3. Generate Moses (parallel text) or XLIFF format for translation
+4. Parse translated text and update Office XML
 5. Office → PDF via LibreOffice
 
-Supports:
-- DOCX (Word documents)
-- PPTX (PowerPoint presentations)  
-- XLSX (Excel spreadsheets)
+Output Formats:
+- Moses: Simple parallel text files (source.txt, target.txt)
+- XLIFF: Industry-standard XML Localization Interchange File Format
 
-Required dependencies (install separately):
+Required dependencies:
 - pdf2docx: pip install pdf2docx (for PDF → DOCX)
 - python-pptx: pip install python-pptx (for PPTX handling)
 - openpyxl: pip install openpyxl (for XLSX handling)
@@ -34,12 +29,12 @@ import re
 import subprocess
 import shutil
 import sys
-import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+from xml.etree import ElementTree as ET
 
 from .base import (
     TranslationPipeline,
@@ -49,154 +44,69 @@ from .base import (
     MergeResult,
 )
 from .office_xml import (
-    OfficeXMLHandler,
-    DocxXMLHandler,
-    PptxXMLHandler,
-    XlsxXMLHandler,
-    ExtractionResult,
     get_handler,
+    ExtractionResult,
 )
-from ..source_detector import detect_source_format, SourceFormat, SourceInfo
+from .office_roundtrip import (
+    OfficeFormat,
+    ProgressSpinner,
+    prompt_office_format,
+)
+from ..source_detector import detect_source_format, SourceFormat
 
 
-class OfficeFormat(Enum):
-    """Office format types."""
-    DOCX = "docx"
-    PPTX = "pptx"
-    XLSX = "xlsx"
-    AUTO = "auto"  # Auto-detect from PDF metadata
-
-
-def prompt_office_format(detected_info: SourceInfo) -> OfficeFormat:
-    """Prompt user to select Office format with detected type as default.
-    
-    Args:
-        detected_info: Source format detection result
-        
-    Returns:
-        Selected OfficeFormat
-    """
-    # Map detected source to default office format
-    format_map = {
-        SourceFormat.WORD: OfficeFormat.DOCX,
-        SourceFormat.POWERPOINT: OfficeFormat.PPTX,
-        SourceFormat.EXCEL: OfficeFormat.XLSX,
-    }
-    default_format = format_map.get(detected_info.format, OfficeFormat.DOCX)
-    
-    # Build options display
-    options = [
-        ("1", "docx", OfficeFormat.DOCX),
-        ("2", "pptx", OfficeFormat.PPTX),
-        ("3", "xlsx", OfficeFormat.XLSX),
-    ]
-    
-    print(f"\n  Detected source: {detected_info.format.value} ({detected_info.confidence:.0%} confidence)")
-    print(f"  Select output format (default: {default_format.value}):")
-    for num, name, fmt in options:
-        marker = " [default]" if fmt == default_format else ""
-        print(f"    {num}. {name.upper()}{marker}")
-    
-    # Get user input
-    try:
-        choice = input("  Enter choice (1/2/3) or press Enter for default: ").strip()
-    except (EOFError, KeyboardInterrupt):
-        choice = ""
-    
-    if not choice:
-        print(f"  Using default: {default_format.value.upper()}")
-        return default_format
-    
-    # Map choice to format
-    choice_map = {"1": OfficeFormat.DOCX, "2": OfficeFormat.PPTX, "3": OfficeFormat.XLSX}
-    selected = choice_map.get(choice, default_format)
-    print(f"  Selected: {selected.value.upper()}")
-    return selected
-
-
-class ProgressSpinner:
-    """
-    Threaded progress spinner for long-running operations.
-    
-    Usage:
-        with ProgressSpinner("Converting..."):
-            do_long_operation()
-    """
-    
-    # ASCII frames for Windows compatibility
-    FRAMES = ["-", "\\", "|", "/"]
-    
-    def __init__(self, message: str = "Processing"):
-        self.message = message
-        self._stop_event = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._start_time = 0.0
-    
-    def _spin(self) -> None:
-        """Spinner thread function."""
-        frame_idx = 0
-        while not self._stop_event.is_set():
-            elapsed = time.time() - self._start_time
-            frame = self.FRAMES[frame_idx % len(self.FRAMES)]
-            sys.stdout.write(f"\r  [{frame}] {self.message} ({elapsed:.1f}s)")
-            sys.stdout.flush()
-            frame_idx += 1
-            time.sleep(0.2)
-    
-    def __enter__(self) -> "ProgressSpinner":
-        self._start_time = time.time()
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._spin, daemon=True)
-        self._thread.start()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self._stop_event.set()
-        if self._thread:
-            self._thread.join(timeout=1.0)
-        elapsed = time.time() - self._start_time
-        # Clear spinner line and write completion
-        sys.stdout.write(f"\r  [OK] {self.message} ({elapsed:.1f}s)    \n")
-        sys.stdout.flush()
+class CATFormat(Enum):
+    """CAT output format types."""
+    MOSES = "moses"      # Parallel text files
+    XLIFF = "xliff"      # XLIFF 1.2/2.0 format
+    TMX = "tmx"          # Translation Memory eXchange (future)
 
 
 @dataclass
-class OfficeRoundtripConfig(PipelineConfig):
-    """Configuration for Office roundtrip pipeline."""
+class OfficeCATConfig(PipelineConfig):
+    """Configuration for Office CAT pipeline."""
     
-    pipeline_type: PipelineType = PipelineType.DOCX_ROUNDTRIP
+    pipeline_type: PipelineType = PipelineType.OFFICE_CAT
     
     # Office format (auto-detect from PDF if AUTO)
     office_format: OfficeFormat = OfficeFormat.AUTO
     
+    # CAT output format (moses is default - simpler for most workflows)
+    cat_format: CATFormat = CATFormat.MOSES
+    
+    # XLIFF version (if cat_format is XLIFF)
+    xliff_version: str = "1.2"
+    
+    # Source language code (for XLIFF)
+    source_language: str = "en"
+    
+    # File encoding for Moses/text output files
+    encoding: str = "utf-8"
+    
     # LibreOffice path
     libreoffice_path: Optional[Path] = None
     
-    # Keep intermediate files
+    # Keep intermediate files (always True now)
     keep_intermediate: bool = True
 
 
-class OfficeRoundtripPipeline(TranslationPipeline):
+class OfficeCATpipeline(TranslationPipeline):
     """
-    Office Roundtrip Pipeline.
-    
-    Auto-detects the original Office format from PDF metadata and uses
-    appropriate conversion tools.
+    Office CAT Pipeline.
     
     Workflow:
     1. Detect source format from PDF metadata
-    2. Convert PDF to Office format (DOCX/PPTX/XLSX)
+    2. Convert PDF to Office format
     3. Extract text from Office XML
-    4. Generate translation file
-    5. Parse translations and update XML
-    6. Repack Office file
-    7. Convert Office → PDF via LibreOffice
+    4. Generate Moses or XLIFF translation files
+    5. Parse translations and update Office XML
+    6. Convert Office → PDF via LibreOffice
     """
     
-    def __init__(self, config: OfficeRoundtripConfig):
+    def __init__(self, config: OfficeCATConfig):
         super().__init__(config)
-        self.config: OfficeRoundtripConfig = config
-        self._detected_format: Optional[SourceInfo] = None
+        self.config: OfficeCATConfig = config
+        self._detected_format: Optional[SourceFormat] = None
         self._extraction_result: Optional[ExtractionResult] = None
         self._check_dependencies()
     
@@ -206,6 +116,7 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         self._has_pptx = False
         self._has_openpyxl = False
         self._has_libreoffice = False
+        self._has_translate_toolkit = False
         
         try:
             import pdf2docx
@@ -222,6 +133,12 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         try:
             import openpyxl
             self._has_openpyxl = True
+        except ImportError:
+            pass
+        
+        try:
+            from translate.storage import xliff
+            self._has_translate_toolkit = True
         except ImportError:
             pass
         
@@ -242,21 +159,36 @@ class OfficeRoundtripPipeline(TranslationPipeline):
     
     @property
     def name(self) -> str:
-        return "Office Roundtrip"
+        return f"Office CAT ({self.config.cat_format.value.upper()})"
     
     @property
     def description(self) -> str:
-        return "PDF -> Office (DOCX/PPTX/XLSX) -> Translate XML -> Office -> PDF"
+        fmt = self.config.cat_format.value.upper()
+        return f"PDF -> Office -> {fmt} -> Office -> PDF"
     
     def derive_paths(self, input_path: Path) -> dict[str, Path]:
-        """Derive paths including Office intermediates."""
+        """Derive paths including Office and CAT format files."""
         base = super().derive_paths(input_path)
         
         ext = self._get_office_extension()
+        cat_fmt = self.config.cat_format
+        
         base.update({
             "office": input_path.with_suffix(ext),
             "office_translated": input_path.parent / f"{input_path.stem}_translated{ext}",
         })
+        
+        # CAT format specific paths
+        if cat_fmt == CATFormat.MOSES:
+            base.update({
+                "source_txt": input_path.parent / f"{input_path.name}_source.txt",
+                "target_txt": input_path.parent / f"{input_path.name}_target.txt",
+            })
+        elif cat_fmt == CATFormat.XLIFF:
+            base.update({
+                "xliff": input_path.parent / f"{input_path.name}.xlf",
+            })
+        
         return base
     
     def _get_office_extension(self) -> str:
@@ -270,41 +202,34 @@ class OfficeRoundtripPipeline(TranslationPipeline):
     
     def extract(self, input_path: Path) -> ExtractResult:
         """
-        Extract text from PDF via Office format conversion.
+        Extract text from PDF via Office format.
         
         Steps:
         1. Detect source format if AUTO
         2. Convert PDF to Office format
-        3. Extract XML from Office ZIP
-        4. Parse text segments from XML
-        5. Generate translation file
+        3. Extract text from Office XML
+        4. Generate Moses or XLIFF format files
         """
-        # Step 1: Detect source format if AUTO
+        # Step 1: Detect source format
         if self.config.office_format == OfficeFormat.AUTO:
-            self._detected_format = detect_source_format(input_path)
-            self.config.office_format = prompt_office_format(self._detected_format)
+            info = detect_source_format(input_path)
+            self.config.office_format = prompt_office_format(info)
         
-        # Update paths with correct extension
         paths = self.derive_paths(input_path)
         
-        # Step 2: Convert PDF to Office format
-        pdf_size = input_path.stat().st_size / 1024  # KB
+        # Step 2: Convert PDF to Office
+        pdf_size = input_path.stat().st_size / 1024
         print(f"  Input PDF: {pdf_size:.1f} KB")
         print(f"  Converting PDF -> {self.config.office_format.value.upper()}...")
         
         start_time = time.time()
-        if self.config.office_format == OfficeFormat.DOCX:
-            self._convert_pdf_to_docx(input_path, paths["office"])
-        elif self.config.office_format == OfficeFormat.PPTX:
-            self._convert_pdf_to_pptx(input_path, paths["office"])
-        elif self.config.office_format == OfficeFormat.XLSX:
-            self._convert_pdf_to_xlsx(input_path, paths["office"])
-        
+        self._convert_pdf_to_office(input_path, paths["office"])
         elapsed = time.time() - start_time
-        office_size = paths["office"].stat().st_size / 1024  # KB
+        
+        office_size = paths["office"].stat().st_size / 1024
         print(f"  Created {self.config.office_format.value.upper()}: {office_size:.1f} KB ({elapsed:.1f}s)")
         
-        # Step 3: Extract XML and text segments
+        # Step 3: Extract text from Office XML
         print(f"  Extracting text from XML...")
         handler = get_handler(paths["office"])
         self._extraction_result = handler.extract()
@@ -315,9 +240,13 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         # Step 4: Generate layout JSON
         layout = {
             "source_file": str(input_path),
-            "pipeline": "office_roundtrip",
+            "pipeline": "office_cat",
             "office_format": self.config.office_format.value,
+            "cat_format": self.config.cat_format.value,
             "office_path": str(paths["office"]),
+            "source_language": self.config.source_language,
+            "target_language": self.config.target_language,
+            "encoding": self.config.encoding,
             "blocks": [
                 {
                     "block_id": seg.block_id,
@@ -334,24 +263,51 @@ class OfficeRoundtripPipeline(TranslationPipeline):
             encoding="utf-8"
         )
         
-        # Step 5: Generate translation file
+        # Step 5: Generate CAT format files
+        extra_files = {
+            "office": paths["office"],
+            "format": self.config.office_format.value,
+            "cat_format": self.config.cat_format.value,
+        }
+        
+        if self.config.cat_format == CATFormat.MOSES:
+            self._generate_moses_format(segments, paths, layout)
+            extra_files["source_txt"] = paths["source_txt"]
+            extra_files["target_txt"] = paths["target_txt"]
+            print(f"  Moses format:")
+            print(f"    Source: {paths['source_txt'].name}")
+            print(f"    Target: {paths['target_txt'].name}")
+        elif self.config.cat_format == CATFormat.XLIFF:
+            self._generate_xliff_format(segments, paths, layout)
+            extra_files["xliff"] = paths["xliff"]
+            print(f"  XLIFF: {paths['xliff'].name}")
+        
+        # Also generate tagged format as backup/alternative
         lines = []
         for i, seg in enumerate(segments):
             text = seg.text.replace('\n', '\\n')
             lines.append(f"<{i}>{text}</{i}>")
         
-        paths["translate"].write_text('\n'.join(lines), encoding="utf-8")
-        paths["translated"].write_text('\n'.join(lines), encoding="utf-8")
+        paths["translate"].write_text('\n'.join(lines), encoding=self.config.encoding)
+        paths["translated"].write_text('\n'.join(lines), encoding=self.config.encoding)
         
         return ExtractResult(
             layout_path=paths["layout"],
             translate_path=paths["translate"],
             translated_template_path=paths["translated"],
-            extra_files={
-                "office": paths["office"],
-                "format": self.config.office_format.value,
-            },
+            extra_files=extra_files,
         )
+    
+    def _convert_pdf_to_office(self, pdf_path: Path, office_path: Path) -> None:
+        """Convert PDF to Office format."""
+        fmt = self.config.office_format
+        
+        if fmt == OfficeFormat.DOCX:
+            self._convert_pdf_to_docx(pdf_path, office_path)
+        elif fmt == OfficeFormat.PPTX:
+            self._convert_pdf_to_pptx(pdf_path, office_path)
+        elif fmt == OfficeFormat.XLSX:
+            self._convert_pdf_to_xlsx(pdf_path, office_path)
     
     def _convert_pdf_to_docx(self, pdf_path: Path, docx_path: Path) -> None:
         """Convert PDF to DOCX using pdf2docx.
@@ -379,7 +335,7 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         # Step 1: Extract annotations before conversion
         annotations = self._extract_pdf_annotations(pdf_path)
         
-        # Step 2: Convert PDF to DOCX (pdf2docx may include annotation text in body)
+        # Step 2: Convert PDF to DOCX
         cv = Converter(str(pdf_path))
         cv.convert(str(docx_path), start=0, end=None)
         cv.close()
@@ -411,43 +367,19 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                     continue
                 
                 for annot in page.annots():
-                    annot_type = annot.type[0]  # Annotation type number
+                    annot_type = annot.type[0]
                     
-                    # Types we want to convert to comments:
-                    # 0: Text (sticky note)
-                    # 1: Link (skip)
-                    # 2: FreeText
-                    # 8: Highlight
-                    # 9: Underline
-                    # 10: Squiggly
-                    # 11: StrikeOut
-                    # 12: Stamp
-                    # 13: Caret
-                    # 14: Ink
-                    # 15: Popup
-                    # 16: FileAttachment
-                    # 17: Sound
-                    # 18: Movie
-                    # 19: Widget
-                    # 20: Screen
-                    # 21: PrinterMark
-                    # 22: TrapNet
-                    # 23: Watermark
-                    # 24: 3D
-                    # 25: RichMedia
-                    
-                    comment_types = {0, 2, 8, 9, 10, 11}  # Types that should be comments
+                    # Types that should be converted to comments
+                    comment_types = {0, 2, 8, 9, 10, 11}  # Text, FreeText, Highlight, Underline, Squiggly, StrikeOut
                     
                     if annot_type not in comment_types:
                         continue
                     
-                    # Get annotation info
                     info = annot.info
                     content = info.get("content", "") or ""
                     subject = info.get("subject", "") or ""
-                    title = info.get("title", "") or ""  # Often the author
+                    title = info.get("title", "") or ""
                     
-                    # Get the text content (for highlights, get selected text)
                     rect = annot.rect
                     
                     # For highlight/underline, get the underlying text
@@ -459,13 +391,12 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                     else:
                         highlighted_text = ""
                     
-                    # Skip if no meaningful content
                     if not content and not highlighted_text:
                         continue
                     
                     annotations.append({
                         "page": page_num,
-                        "type": annot.type[1],  # Type name string
+                        "type": annot.type[1],
                         "rect": [rect.x0, rect.y0, rect.x1, rect.y1],
                         "content": content,
                         "subject": subject,
@@ -478,16 +409,10 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         return annotations
     
     def _add_word_comments(self, docx_path: Path, annotations: list[dict]) -> None:
-        """Add PDF annotations as Word comments to the DOCX file.
-        
-        Uses python-docx to add comments. Comments are added at the end
-        of each page's content with a marker indicating the annotation type.
-        """
+        """Add PDF annotations as Word comments to the DOCX file."""
         try:
             from docx import Document
             from docx.shared import Pt, RGBColor
-            from docx.oxml.ns import qn
-            from docx.oxml import OxmlElement
         except ImportError:
             print("    Warning: python-docx not installed, skipping comment conversion")
             return
@@ -502,9 +427,7 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                 by_page[page] = []
             by_page[page].append(annot)
         
-        # Add a comments section at the end of the document
         if annotations:
-            # Add separator
             doc.add_paragraph()
             separator = doc.add_paragraph()
             separator.add_run("─" * 50)
@@ -526,24 +449,20 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                 for annot in page_annotations:
                     para = doc.add_paragraph()
                     
-                    # Add annotation type
                     type_run = para.add_run(f"[{annot['type']}] ")
                     type_run.font.color.rgb = RGBColor(0x00, 0x66, 0xCC)
                     type_run.font.size = Pt(9)
                     
-                    # Add author if present
                     if annot.get("author"):
                         author_run = para.add_run(f"({annot['author']}) ")
                         author_run.italic = True
                         author_run.font.size = Pt(9)
                     
-                    # Add highlighted text if present
                     if annot.get("highlighted_text"):
                         hl_run = para.add_run(f'"{annot["highlighted_text"]}" - ')
                         hl_run.font.color.rgb = RGBColor(0xFF, 0x99, 0x00)
                         hl_run.font.size = Pt(9)
                     
-                    # Add comment content
                     if annot.get("content"):
                         content_run = para.add_run(annot["content"])
                         content_run.font.size = Pt(9)
@@ -555,10 +474,6 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         
         Handles:
         - Text extraction with position preservation
-        - Font formatting (bold, italic, color, size, family)
-        - Paragraph alignment
-        - Header/footer detection
-        - Auto-fit for text overflow
         - Embedded images (photos, diagrams)
         - Rendered SmartArt graphics
         - Vector graphics rasterized by the PDF
@@ -574,28 +489,24 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         import fitz
         import io
         from pptx import Presentation
-        from pptx.util import Inches, Pt
+        from pptx.util import Inches, Pt, Emu
         from pptx.dml.color import RGBColor
         from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
         
-        # Extract text and layout from PDF
         doc = fitz.open(str(pdf_path))
         total_pages = len(doc)
         
         try:
-            # Create presentation with same page size
             prs = Presentation()
             
             if total_pages > 0:
                 first_page = doc[0]
-                # Set slide size to match PDF (convert points to EMUs)
                 prs.slide_width = int(first_page.rect.width * 914400 / 72)
                 prs.slide_height = int(first_page.rect.height * 914400 / 72)
             
-            blank_layout = prs.slide_layouts[6]  # Blank layout
+            blank_layout = prs.slide_layouts[6]
             
             for page_num, page in enumerate(doc, 1):
-                # Show progress
                 sys.stdout.write(f"\r    Slide {page_num}/{total_pages}")
                 sys.stdout.flush()
                 
@@ -615,10 +526,8 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                 # Extract and add images (including SmartArt rendered as images)
                 self._add_images_to_slide(doc, page, slide)
             
-            # Clear progress line
             sys.stdout.write(f"\r    Created {total_pages} slides    \n")
             sys.stdout.flush()
-            
             prs.save(str(pptx_path))
             
         finally:
@@ -725,6 +634,14 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                         run.font.color.rgb = RGBColor(r, g, b)
                     except Exception:
                         pass
+        
+        # Add metadata for header/footer detection
+        if is_header or is_footer:
+            try:
+                # Move header/footer text boxes to appropriate z-order
+                pass  # PowerPoint handles this automatically
+            except Exception:
+                pass
     
     def _add_images_to_slide(self, doc, page, slide) -> None:
         """Extract images from PDF page and add to PowerPoint slide.
@@ -751,7 +668,6 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                         continue
                     
                     image_bytes = base_image["image"]
-                    image_ext = base_image.get("ext", "png")
                     
                     # Get image position on page
                     img_rects = page.get_image_rects(xref)
@@ -776,15 +692,12 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                                 image_stream, left, top, width, height
                             )
                         except Exception:
-                            # Some image formats may not be supported
                             pass
                             
                 except Exception:
-                    # Skip problematic images
                     continue
                     
         except Exception:
-            # If image extraction fails, continue without images
             pass
     
     def _convert_pdf_to_xlsx(self, pdf_path: Path, xlsx_path: Path) -> None:
@@ -809,8 +722,8 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         import fitz
         import io
         from openpyxl import Workbook
-        from openpyxl.utils import get_column_letter
         from openpyxl.drawing.image import Image as XLImage
+        from openpyxl.utils import get_column_letter
         from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
         
         doc = fitz.open(str(pdf_path))
@@ -820,7 +733,6 @@ class OfficeRoundtripPipeline(TranslationPipeline):
             wb = Workbook()
             
             for page_num, page in enumerate(doc):
-                # Show progress
                 sys.stdout.write(f"\r    Sheet {page_num + 1}/{total_pages}")
                 sys.stdout.flush()
                 
@@ -830,10 +742,7 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                 else:
                     ws = wb.create_sheet(f"Sheet{page_num + 1}")
                 
-                # Extract text blocks and try to place them in cells
                 blocks = page.get_text("dict")["blocks"]
-                
-                # Sort blocks by position (top to bottom, left to right)
                 text_blocks = [b for b in blocks if b.get("type") == 0]
                 text_blocks.sort(key=lambda b: (b["bbox"][1], b["bbox"][0]))
                 
@@ -844,7 +753,7 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                 
                 for block in text_blocks:
                     y = block["bbox"][1]
-                    if last_y is None or abs(y - last_y) < 15:  # Same row
+                    if last_y is None or abs(y - last_y) < 15:
                         current_row.append(block)
                     else:
                         if current_row:
@@ -855,7 +764,6 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                 if current_row:
                     rows.append(sorted(current_row, key=lambda b: b["bbox"][0]))
                 
-                # Write to worksheet with formatting
                 max_row = 0
                 for row_num, row_blocks in enumerate(rows, 1):
                     max_row = row_num
@@ -865,10 +773,8 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                 # Add images to worksheet
                 self._add_images_to_worksheet(doc, page, ws, max_row)
             
-            # Clear progress line
             sys.stdout.write(f"\r    Created {total_pages} sheets    \n")
             sys.stdout.flush()
-            
             wb.save(str(xlsx_path))
             
         finally:
@@ -973,23 +879,18 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         from openpyxl.utils import get_column_letter
         
         try:
-            # Get all images on this page
             image_list = page.get_images(full=True)
             image_count = 0
             
             for img_index, img_info in enumerate(image_list):
-                xref = img_info[0]  # Image reference number
+                xref = img_info[0]
                 
                 try:
-                    # Extract image data
                     base_image = doc.extract_image(xref)
                     if not base_image:
                         continue
                     
                     image_bytes = base_image["image"]
-                    image_ext = base_image.get("ext", "png")
-                    
-                    # Get original dimensions
                     img_width = base_image.get("width", 100)
                     img_height = base_image.get("height", 100)
                     
@@ -997,46 +898,220 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                     if img_width < 10 or img_height < 10:
                         continue
                     
-                    # Get image position on page
                     img_rects = page.get_image_rects(xref)
                     
-                    # Create image from bytes
                     image_stream = io.BytesIO(image_bytes)
                     try:
                         xl_img = XLImage(image_stream)
                         
-                        # Scale image to reasonable size (max 400px width)
+                        # Scale image to reasonable size
                         if xl_img.width > 400:
                             scale = 400 / xl_img.width
                             xl_img.width = 400
                             xl_img.height = int(xl_img.height * scale)
                         
-                        # Place image in worksheet
-                        # Use image rect position if available, otherwise place below text
                         if img_rects:
                             rect = img_rects[0]
-                            # Approximate cell position from PDF coordinates
-                            col = max(1, int(rect.x0 / 72))  # ~1 inch per column
-                            row = max(1, int(rect.y0 / 20))  # ~20 points per row
+                            col = max(1, int(rect.x0 / 72))
+                            row = max(1, int(rect.y0 / 20))
                             cell_ref = f"{get_column_letter(col)}{row}"
                         else:
-                            # Place images below text content
                             cell_ref = f"A{start_row + 2 + image_count * 15}"
                         
                         ws.add_image(xl_img, cell_ref)
                         image_count += 1
                         
                     except Exception:
-                        # Some image formats may not be supported by openpyxl
                         pass
                         
                 except Exception:
-                    # Skip problematic images
                     continue
                     
         except Exception:
-            # If image extraction fails, continue without images
             pass
+    
+    def _generate_moses_format(
+        self,
+        segments: list,
+        paths: dict[str, Path],
+        layout: dict,
+    ) -> None:
+        """Generate Moses parallel text format.
+        
+        Moses format:
+        - source.txt: One segment per line (source text)
+        - target.txt: One segment per line (to be translated)
+        
+        Each line corresponds to the same translation unit.
+        Segment IDs are preserved in a separate mapping file.
+        """
+        source_lines = []
+        target_lines = []
+        
+        for seg in segments:
+            # Normalize text for Moses: replace newlines with special token
+            text = seg.text.replace('\n', ' <br> ')
+            # Clean up multiple spaces
+            text = ' '.join(text.split())
+            source_lines.append(text)
+            target_lines.append(text)  # Template for translation
+        
+        paths["source_txt"].write_text('\n'.join(source_lines), encoding=self.config.encoding)
+        paths["target_txt"].write_text('\n'.join(target_lines), encoding=self.config.encoding)
+        
+        # Also save segment ID mapping
+        mapping_path = paths["source_txt"].with_suffix('.mapping.json')
+        mapping = {
+            "format": "moses",
+            "segments": [
+                {"line": i, "block_id": seg.block_id}
+                for i, seg in enumerate(segments)
+            ]
+        }
+        mapping_path.write_text(json.dumps(mapping, indent=2), encoding="utf-8")
+    
+    def _generate_xliff_format(
+        self,
+        segments: list,
+        paths: dict[str, Path],
+        layout: dict,
+    ) -> None:
+        """Generate XLIFF format using translate-toolkit (OASIS compliant).
+        
+        XLIFF (XML Localization Interchange File Format) is an industry standard
+        for exchanging translation data between CAT tools.
+        
+        Uses translate-toolkit for standards-compliant XLIFF 1.2 output.
+        Falls back to basic XML generation if translate-toolkit not installed.
+        """
+        if self._has_translate_toolkit:
+            self._generate_xliff_with_toolkit(segments, paths, layout)
+        else:
+            self._generate_xliff_basic(segments, paths, layout)
+    
+    def _generate_xliff_with_toolkit(
+        self,
+        segments: list,
+        paths: dict[str, Path],
+        layout: dict,
+    ) -> None:
+        """Generate XLIFF using translate-toolkit (standards-compliant).
+        
+        translate-toolkit implements OASIS XLIFF 1.2 specification:
+        http://docs.oasis-open.org/xliff/xliff-core/xliff-core.html
+        """
+        from translate.storage.xliff import xlifffile
+        
+        source_lang = self.config.source_language
+        target_lang = self.config.target_language
+        
+        # Create XLIFF file with proper header
+        xliff_store = xlifffile()
+        xliff_store.setsourcelanguage(source_lang)
+        xliff_store.settargetlanguage(target_lang)
+        
+        for i, seg in enumerate(segments):
+            # Create translation unit with source text
+            unit = xliff_store.addsourceunit(seg.text)
+            unit.setid(str(i))
+            
+            # Set target (pre-filled with source for template)
+            unit.target = seg.text
+            
+            # Set state to needs-translation (XLIFF 1.2 standard state)
+            if hasattr(unit, 'markfuzzy'):
+                unit.markfuzzy()  # translate-toolkit way to set state
+            
+            # Add location/context with block ID
+            if hasattr(unit, 'addlocation'):
+                unit.addlocation(seg.block_id)
+            
+            # Add note with metadata
+            if seg.metadata and hasattr(unit, 'addnote'):
+                note_text = f"Type: {seg.metadata.get('type', 'text')}"
+                unit.addnote(note_text, origin="developer")
+        
+        # Set filename on the file node if available
+        try:
+            filenode = xliff_store.getfilenode(None)
+            if filenode is not None:
+                xliff_store.setfilename(filenode, str(paths["office"].name))
+        except Exception:
+            pass  # Filename is optional
+        
+        # Write to file
+        with open(paths["xliff"], 'wb') as f:
+            xliff_store.serialize(f)
+        
+        print(f"    Using translate-toolkit (OASIS XLIFF 1.2 compliant)")
+    
+    def _generate_xliff_basic(
+        self,
+        segments: list,
+        paths: dict[str, Path],
+        layout: dict,
+    ) -> None:
+        """Generate basic XLIFF format (fallback without translate-toolkit).
+        
+        Manual XML generation following XLIFF 1.2 structure.
+        For full compliance, install translate-toolkit.
+        """
+        source_lang = self.config.source_language
+        target_lang = self.config.target_language
+        
+        # XLIFF 1.2 format
+        xliff = ET.Element('xliff')
+        xliff.set('version', '1.2')
+        xliff.set('xmlns', 'urn:oasis:names:tc:xliff:document:1.2')
+        
+        file_elem = ET.SubElement(xliff, 'file')
+        file_elem.set('original', str(paths["office"]))
+        file_elem.set('source-language', source_lang)
+        file_elem.set('target-language', target_lang)
+        file_elem.set('datatype', 'plaintext')
+        
+        body = ET.SubElement(file_elem, 'body')
+        
+        for i, seg in enumerate(segments):
+            trans_unit = ET.SubElement(body, 'trans-unit')
+            trans_unit.set('id', str(i))
+            trans_unit.set('resname', seg.block_id)
+            
+            source = ET.SubElement(trans_unit, 'source')
+            source.text = seg.text
+            
+            target = ET.SubElement(trans_unit, 'target')
+            target.set('state', 'needs-translation')
+            target.text = seg.text  # Pre-fill with source for template
+            
+            # Add note with metadata
+            if seg.metadata:
+                note = ET.SubElement(trans_unit, 'note')
+                note.text = f"Type: {seg.metadata.get('type', 'text')}"
+        
+        # Pretty print
+        self._indent_xml(xliff)
+        
+        tree = ET.ElementTree(xliff)
+        tree.write(str(paths["xliff"]), encoding="utf-8", xml_declaration=True)
+        
+        print(f"    Using basic XLIFF (install translate-toolkit for full compliance)")
+    
+    def _indent_xml(self, elem: ET.Element, level: int = 0) -> None:
+        """Add indentation to XML for readability."""
+        indent = "\n" + "  " * level
+        if len(elem):
+            if not elem.text or not elem.text.strip():
+                elem.text = indent + "  "
+            if not elem.tail or not elem.tail.strip():
+                elem.tail = indent
+            for child in elem:
+                self._indent_xml(child, level + 1)
+            if not child.tail or not child.tail.strip():
+                child.tail = indent
+        else:
+            if level and (not elem.tail or not elem.tail.strip()):
+                elem.tail = indent
     
     def merge(
         self,
@@ -1049,9 +1124,9 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         Apply translations and convert back to PDF.
         
         Steps:
-        1. Load layout and parse translations
-        2. Load Office file and update XML with translations
-        3. Repack Office file
+        1. Load layout and determine CAT format
+        2. Parse translations from Moses/XLIFF or tagged format
+        3. Update Office XML with translations
         4. Convert Office → PDF via LibreOffice
         """
         if not self._has_libreoffice:
@@ -1063,17 +1138,27 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         # Load layout
         layout = json.loads(layout_path.read_text(encoding="utf-8"))
         office_format = layout.get("office_format", "docx")
+        cat_format = layout.get("cat_format", "moses")
         office_path = Path(layout.get("office_path", ""))
         block_order = layout.get("block_order", [])
         
         if not office_path.exists():
             raise FileNotFoundError(f"Office file not found: {office_path}")
         
-        # Parse translations
-        translations = self._parse_translations(translated_path, block_order)
+        # Parse translations based on format
+        print(f"  CAT format: {cat_format.upper()}")
+        
+        if cat_format == "moses":
+            translations = self._parse_moses_translations(layout_path, block_order)
+        elif cat_format == "xliff":
+            translations = self._parse_xliff_translations(layout_path, block_order)
+        else:
+            # Fallback to tagged format
+            translations = self._parse_tagged_translations(translated_path, block_order)
+        
         print(f"  Parsed {len(translations)} translations")
         
-        # Create translated Office file path
+        # Create translated Office file
         ext = f".{office_format}"
         translated_office = input_path.parent / f"{input_path.stem}_translated{ext}"
         
@@ -1083,17 +1168,16 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         extraction = handler.extract()
         
         # Update with translations
-        print(f"  Updating {office_format.upper()} with {len(translations)} translations...")
+        print(f"  Updating {office_format.upper()} with translations...")
         handler.update(translated_office, translations, extraction)
         
-        # Get file size for progress info
-        office_size = translated_office.stat().st_size / 1024  # KB
+        office_size = translated_office.stat().st_size / 1024
         print(f"  Office file: {office_size:.1f} KB")
         
-        # Convert to PDF with progress spinner
+        # Convert to PDF
         self._office_to_pdf(translated_office, output_path, office_format)
         
-        # Keep intermediate files (original and translated Office files)
+        # Keep intermediate files
         print(f"  Kept: {office_path.name} ({office_format.upper()})")
         print(f"  Kept: {translated_office.name} ({office_format.upper()})")
         
@@ -1102,13 +1186,130 @@ class OfficeRoundtripPipeline(TranslationPipeline):
             blocks_processed=len(translations),
         )
     
-    def _parse_translations(
+    def _parse_moses_translations(
+        self,
+        layout_path: Path,
+        block_order: list[str],
+    ) -> dict[str, str]:
+        """Parse Moses format translations."""
+        target_path = layout_path.parent / f"{layout_path.stem.replace('_layout', '')}_target.txt"
+        mapping_path = layout_path.parent / f"{layout_path.stem.replace('_layout', '')}_source.mapping.json"
+        
+        if not target_path.exists():
+            raise FileNotFoundError(
+                f"Moses target file not found: {target_path}\n"
+                f"Expected: {target_path.name}"
+            )
+        
+        target_lines = target_path.read_text(encoding=self.config.encoding).split('\n')
+        
+        # Load mapping if exists
+        if mapping_path.exists():
+            mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+            segment_map = {s["line"]: s["block_id"] for s in mapping.get("segments", [])}
+        else:
+            segment_map = {i: block_id for i, block_id in enumerate(block_order)}
+        
+        translations = {}
+        for line_num, text in enumerate(target_lines):
+            if line_num in segment_map:
+                # Convert Moses format back to normal text
+                text = text.replace(' <br> ', '\n')
+                translations[segment_map[line_num]] = text
+        
+        return translations
+    
+    def _parse_xliff_translations(
+        self,
+        layout_path: Path,
+        block_order: list[str],
+    ) -> dict[str, str]:
+        """Parse XLIFF format translations using translate-toolkit."""
+        xliff_path = layout_path.parent / f"{layout_path.stem.replace('_layout', '')}.xlf"
+        
+        if not xliff_path.exists():
+            raise FileNotFoundError(
+                f"XLIFF file not found: {xliff_path}\n"
+                f"Expected: {xliff_path.name}"
+            )
+        
+        if self._has_translate_toolkit:
+            return self._parse_xliff_with_toolkit(xliff_path, block_order)
+        else:
+            return self._parse_xliff_basic(xliff_path, block_order)
+    
+    def _parse_xliff_with_toolkit(
+        self,
+        xliff_path: Path,
+        block_order: list[str],
+    ) -> dict[str, str]:
+        """Parse XLIFF using translate-toolkit (standards-compliant)."""
+        from translate.storage.xliff import xlifffile
+        
+        with open(xliff_path, 'rb') as f:
+            xliff_store = xlifffile(f)
+        
+        translations = {}
+        
+        for unit in xliff_store.units:
+            # Skip header units
+            if unit.isheader():
+                continue
+            
+            unit_id = unit.getid()
+            
+            # Get target text (translated)
+            target = unit.target
+            if target:
+                # Map by ID or use block_order
+                if unit_id.isdigit():
+                    idx = int(unit_id)
+                    if idx < len(block_order):
+                        translations[block_order[idx]] = target
+                else:
+                    translations[unit_id] = target
+        
+        return translations
+    
+    def _parse_xliff_basic(
+        self,
+        xliff_path: Path,
+        block_order: list[str],
+    ) -> dict[str, str]:
+        """Parse XLIFF using basic XML (fallback)."""
+        tree = ET.parse(str(xliff_path))
+        root = tree.getroot()
+        
+        # Handle XLIFF namespace
+        ns = {'xliff': 'urn:oasis:names:tc:xliff:document:1.2'}
+        
+        translations = {}
+        
+        # Try with namespace first, then without
+        trans_units = root.findall('.//xliff:trans-unit', ns)
+        if not trans_units:
+            trans_units = root.findall('.//trans-unit')
+        
+        for tu in trans_units:
+            block_id = tu.get('resname') or tu.get('id')
+            
+            # Get target text
+            target = tu.find('xliff:target', ns)
+            if target is None:
+                target = tu.find('target')
+            
+            if target is not None and target.text:
+                translations[block_id] = target.text
+        
+        return translations
+    
+    def _parse_tagged_translations(
         self,
         translated_path: Path,
         block_order: list[str],
     ) -> dict[str, str]:
-        """Parse translated file."""
-        content = translated_path.read_text(encoding="utf-8")
+        """Parse tagged format translations (fallback)."""
+        content = translated_path.read_text(encoding=self.config.encoding)
         translations = {}
         
         pattern = r'<(\d+)>(.*?)</\1>'
@@ -1127,7 +1328,7 @@ class OfficeRoundtripPipeline(TranslationPipeline):
         pdf_path: Path,
         office_format: str = "docx",
     ) -> None:
-        """Convert Office file to PDF via LibreOffice with progress indication."""
+        """Convert Office file to PDF via LibreOffice."""
         cmd = [
             str(self.config.libreoffice_path),
             "--headless",
@@ -1136,14 +1337,12 @@ class OfficeRoundtripPipeline(TranslationPipeline):
             str(office_path),
         ]
         
-        # Use spinner for progress during LibreOffice conversion
         with ProgressSpinner(f"Converting {office_format.upper()} to PDF via LibreOffice"):
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
         if result.returncode != 0:
             raise RuntimeError(f"LibreOffice conversion failed: {result.stderr}")
         
-        # LibreOffice names output based on input filename
         generated = office_path.with_suffix(".pdf")
         if generated.name != pdf_path.name:
             generated_in_outdir = pdf_path.parent / generated.name
@@ -1151,22 +1350,84 @@ class OfficeRoundtripPipeline(TranslationPipeline):
                 shutil.move(str(generated_in_outdir), str(pdf_path))
     
     def get_translation_prompt(self, block_count: int) -> str:
-        """Get translation prompt."""
-        from ..translation_io import get_translation_prompt
-        return get_translation_prompt(block_count, self.config.target_language)
+        """Get translation prompt based on CAT format."""
+        if self.config.cat_format == CATFormat.MOSES:
+            return self._get_moses_prompt(block_count)
+        elif self.config.cat_format == CATFormat.XLIFF:
+            return self._get_xliff_prompt(block_count)
+        else:
+            from ..translation_io import get_translation_prompt
+            return get_translation_prompt(block_count, self.config.target_language)
+    
+    def _get_moses_prompt(self, block_count: int) -> str:
+        """Get Moses format translation prompt."""
+        return f"""
+Moses Parallel Text Format - {block_count} segments to translate
+
+Files:
+- *_source.txt: Source text (one segment per line)
+- *_target.txt: Target text (translate this file)
+
+Instructions:
+1. Open *_target.txt
+2. Translate each line to {self.config.target_language}
+3. Keep the same number of lines (do NOT add or remove lines)
+4. Preserve <br> markers (they represent line breaks)
+5. Save as UTF-8 encoding
+
+Example:
+Source line: Hello world <br> Welcome
+Target line: नमस्ते दुनिया <br> स्वागत है
+
+After translation, run: python main.py merge input.pdf
+"""
+    
+    def _get_xliff_prompt(self, block_count: int) -> str:
+        """Get XLIFF format translation prompt."""
+        return f"""
+XLIFF Format - {block_count} translation units
+
+File: *.xlf (XLIFF 1.2 format)
+
+Instructions:
+1. Open the .xlf file in your CAT tool (SDL Trados, memoQ, OmegaT, etc.)
+2. Translate each <source> to <target> in {self.config.target_language}
+3. Update state="needs-translation" to state="translated"
+4. Save the file
+
+Or edit manually:
+- Find each <trans-unit>
+- Translate the <target> element content
+- Keep XML structure intact
+
+After translation, run: python main.py merge input.pdf
+"""
 
 
-def create_office_roundtrip_pipeline(
+def create_office_cat_pipeline(
     target_language: str = "Hindi",
+    source_language: str = "en",
     office_format: OfficeFormat = OfficeFormat.AUTO,
+    cat_format: CATFormat = CATFormat.MOSES,
+    encoding: str = "utf-8",
     libreoffice_path: Optional[Path] = None,
-    keep_intermediate: bool = True,
-) -> OfficeRoundtripPipeline:
-    """Factory function to create Office roundtrip pipeline."""
-    config = OfficeRoundtripConfig(
+) -> OfficeCATpipeline:
+    """Factory function to create Office CAT pipeline.
+    
+    Args:
+        target_language: Target language for translation (default: Hindi)
+        source_language: Source language code (default: en)
+        office_format: Office format - AUTO, DOCX, PPTX, XLSX (default: AUTO)
+        cat_format: CAT output format - MOSES or XLIFF (default: MOSES)
+        encoding: File encoding for text output (default: utf-8)
+        libreoffice_path: Path to LibreOffice executable (auto-detected if None)
+    """
+    config = OfficeCATConfig(
         target_language=target_language,
+        source_language=source_language,
         office_format=office_format,
+        cat_format=cat_format,
+        encoding=encoding,
         libreoffice_path=libreoffice_path,
-        keep_intermediate=keep_intermediate,
     )
-    return OfficeRoundtripPipeline(config)
+    return OfficeCATpipeline(config)

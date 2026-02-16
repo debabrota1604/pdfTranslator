@@ -21,6 +21,7 @@ class PipelineType(Enum):
     DIRECT_PDF = "direct"       # Direct PDF manipulation (current approach)
     DOCX_ROUNDTRIP = "docx"     # PDF → DOCX → translate → DOCX → PDF
     XLIFF = "xliff"             # Generate XLIFF format for CAT tools
+    OFFICE_CAT = "office_cat"   # PDF → Office → Moses/XLIFF → Office → PDF
 
 
 @dataclass

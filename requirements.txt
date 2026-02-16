@@ -26,6 +26,14 @@ openpyxl>=3.1.0
 # Download from: https://www.libreoffice.org/
 
 # ============================================
+# CAT Format Dependencies (optional)
+# Install for XLIFF/TMX/Moses formats
+# ============================================
+
+# Industry-standard translation toolkit with XLIFF 1.2/2.0, TMX, Moses support
+translate-toolkit>=3.10.0
+
+# ============================================
 # Development & Testing
 # ============================================
 
