@@ -4,7 +4,7 @@ PDF Layout-Preserving Translation Engine.
 
 Supports multiple translation pipelines:
 - direct (default): Direct PDF text replacement using PyMuPDF
-- office/docx: PDF → Office (auto-detect DOCX/PPTX/XLSX) → Translate → PDF
+- office/docx: PDF -> Office (auto-detect DOCX/PPTX/XLSX) -> Translate -> PDF
 - xliff: Generate XLIFF format for professional CAT tools
 
 Two-stage workflow:
@@ -36,6 +36,7 @@ from pdf_layout.rebuilder_unicode import RenderMethod
 
 # Map CLI names to pipeline types
 PIPELINE_MAP = {
+    "auto": None,  # Auto-detect from layout file
     "direct": PipelineType.DIRECT_PDF,
     "1": PipelineType.DIRECT_PDF,
     "office": PipelineType.DOCX_ROUNDTRIP,
@@ -83,13 +84,13 @@ def info_command(args: argparse.Namespace) -> int:
     print(f"Recommended Pipeline: {get_recommended_pipeline(info)}")
     
     if info.format == SourceFormat.WORD:
-        print(f"  → Use: python main.py extract {input_path} --pipeline office")
+        print(f"  -> Use: python main.py extract {input_path} --pipeline office")
     elif info.format == SourceFormat.POWERPOINT:
-        print(f"  → Use: python main.py extract {input_path} --pipeline office --office-format pptx")
+        print(f"  -> Use: python main.py extract {input_path} --pipeline office --office-format pptx")
     elif info.format == SourceFormat.EXCEL:
-        print(f"  → Use: python main.py extract {input_path} --pipeline office --office-format xlsx")
+        print(f"  -> Use: python main.py extract {input_path} --pipeline office --office-format xlsx")
     else:
-        print(f"  → Use: python main.py extract {input_path} --pipeline direct")
+        print(f"  -> Use: python main.py extract {input_path} --pipeline direct")
     
     return 0
 
@@ -130,7 +131,6 @@ def extract_command(args: argparse.Namespace) -> int:
             pipeline = create_office_roundtrip_pipeline(
                 target_language=target_lang,
                 office_format=office_format,
-                keep_intermediate=getattr(args, 'keep_intermediate', False),
             )
         elif pipeline_type == PipelineType.XLIFF:
             pipeline = create_xliff_pipeline(
@@ -171,7 +171,8 @@ def extract_command(args: argparse.Namespace) -> int:
         print("=" * 60)
         print()
         print(f"Next: Translate {result.translate_path} -> {result.translated_template_path}")
-        print(f"Then: python main.py merge {input_path} output.pdf --pipeline {args.pipeline}")
+        print(f"Then: python main.py merge {input_path}")
+        print(f"      (auto-creates {input_path.stem}_translated.pdf)")
         
         return 0
         
@@ -186,15 +187,43 @@ def extract_command(args: argparse.Namespace) -> int:
 def merge_command(args: argparse.Namespace) -> int:
     """Merge translations and rebuild document."""
     input_path = Path(args.input_pdf)
-    output_path = Path(args.output_pdf)
+    
+    # Check if input is a layout JSON file
+    if input_path.suffix == '.json' and input_path.exists():
+        return _merge_from_layout(input_path, args)
     
     if not input_path.exists():
         print(f"Error: Input file not found: {input_path}", file=sys.stderr)
         return 1
     
-    # Parse pipeline type
-    pipeline_type = PIPELINE_MAP.get(args.pipeline.lower(), PipelineType.DIRECT_PDF)
-    target_lang = getattr(args, 'language', 'Hindi')
+    # Auto-derive output path if not specified (-o takes precedence over positional)
+    output_pdf = getattr(args, 'output_pdf_opt', None) or args.output_pdf
+    if output_pdf:
+        output_path = Path(output_pdf)
+    else:
+        output_path = input_path.parent / f"{input_path.stem}_translated.pdf"
+    
+    # Try to auto-detect pipeline from existing layout file
+    layout_path = input_path.parent / f"{input_path.name}_layout.json"
+    pipeline_type = None
+    target_lang = getattr(args, 'language', None)
+    
+    if layout_path.exists() and args.pipeline == 'auto':
+        import json
+        layout = json.loads(layout_path.read_text(encoding="utf-8"))
+        stored_pipeline = layout.get("pipeline", "direct")
+        if stored_pipeline == "office_roundtrip":
+            pipeline_type = PipelineType.DOCX_ROUNDTRIP
+        elif stored_pipeline == "xliff":
+            pipeline_type = PipelineType.XLIFF
+        else:
+            pipeline_type = PipelineType.DIRECT_PDF
+        target_lang = target_lang or layout.get("target_language", "Hindi")
+        print(f"  Auto-detected pipeline: {stored_pipeline}")
+    
+    if pipeline_type is None:
+        pipeline_type = PIPELINE_MAP.get(args.pipeline.lower(), PipelineType.DIRECT_PDF)
+    target_lang = target_lang or 'Hindi'
     
     # Parse render method
     render_method = RENDER_METHOD_MAP.get(
@@ -220,7 +249,6 @@ def merge_command(args: argparse.Namespace) -> int:
             pipeline = create_office_roundtrip_pipeline(
                 target_language=target_lang,
                 office_format=office_format,
-                keep_intermediate=getattr(args, 'keep_intermediate', False),
             )
         elif pipeline_type == PipelineType.XLIFF:
             pipeline = create_xliff_pipeline(target_language=target_lang)
@@ -268,6 +296,192 @@ def merge_command(args: argparse.Namespace) -> int:
         return 1
 
 
+def _merge_from_layout(layout_path: Path, args: argparse.Namespace) -> int:
+    """Merge using layout JSON file directly."""
+    import json
+    
+    layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    
+    # Get source file from layout
+    source_file = Path(layout.get("source_file", ""))
+    if not source_file.exists():
+        # Try relative to layout file
+        source_file = layout_path.parent / source_file.name
+    
+    if not source_file.exists():
+        print(f"Error: Source file not found: {layout.get('source_file')}", file=sys.stderr)
+        return 1
+    
+    # Derive output path (-o takes precedence over positional)
+    output_pdf = getattr(args, 'output_pdf_opt', None) or args.output_pdf
+    if output_pdf:
+        output_path = Path(output_pdf)
+    else:
+        output_path = source_file.parent / f"{source_file.stem}_translated.pdf"
+    
+    # Get pipeline from layout
+    stored_pipeline = layout.get("pipeline", "direct")
+    if stored_pipeline == "office_roundtrip":
+        pipeline_type = PipelineType.DOCX_ROUNDTRIP
+    elif stored_pipeline == "xliff":
+        pipeline_type = PipelineType.XLIFF
+    else:
+        pipeline_type = PipelineType.DIRECT_PDF
+    
+    target_lang = layout.get("target_language", "Hindi")
+    
+    # Parse render method
+    render_method = RENDER_METHOD_MAP.get(
+        getattr(args, 'render_method', '1'),
+        RenderMethod.LINE_BY_LINE
+    )
+    
+    try:
+        # Create pipeline
+        if pipeline_type == PipelineType.DIRECT_PDF:
+            pipeline = create_direct_pdf_pipeline(
+                target_language=target_lang,
+                render_method=render_method,
+                min_font_size=args.min_font_size,
+                font_step=args.font_step,
+            )
+        elif pipeline_type == PipelineType.DOCX_ROUNDTRIP:
+            office_format = OFFICE_FORMAT_MAP.get(
+                layout.get("office_format", "auto"),
+                OfficeFormat.AUTO
+            )
+            pipeline = create_office_roundtrip_pipeline(
+                target_language=target_lang,
+                office_format=office_format,
+            )
+        elif pipeline_type == PipelineType.XLIFF:
+            pipeline = create_xliff_pipeline(target_language=target_lang)
+        else:
+            pipeline = create_direct_pdf_pipeline(target_language=target_lang)
+        
+        # Get translated file path
+        translated_path = layout_path.parent / f"{source_file.name}_translated.txt"
+        if not translated_path.exists():
+            print(f"Error: Translated file not found: {translated_path}", file=sys.stderr)
+            return 1
+        
+        print(f"Pipeline: {pipeline.name}")
+        print(f"Source: {source_file}")
+        print(f"Layout: {layout_path}")
+        print(f"Parsing: {translated_path}")
+        
+        # Run merge
+        result = pipeline.merge(
+            input_path=source_file,
+            output_path=output_path,
+            translated_path=translated_path,
+            layout_path=layout_path,
+        )
+        
+        print(f"  Processed {result.blocks_processed} blocks")
+        
+        if result.warnings:
+            for warning in result.warnings:
+                print(f"  Warning: {warning}")
+        
+        print(f"Done: {result.output_path}")
+        return 0
+        
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def topdf_command(args: argparse.Namespace) -> int:
+    """Convert edited Office file to PDF using LibreOffice.
+    
+    Workflow:
+    1. User runs merge to get _translated.pptx
+    2. User opens in PowerPoint/Word, manually adjusts text boxes
+    3. User runs: python main.py topdf edited_file.pptx
+    4. Gets fresh PDF from the manually edited Office file
+    """
+    import subprocess
+    import shutil
+    from pathlib import Path
+    
+    input_path = Path(args.input_file)
+    
+    if not input_path.exists():
+        print(f"Error: File not found: {input_path}", file=sys.stderr)
+        return 1
+    
+    # Validate extension
+    ext = input_path.suffix.lower()
+    if ext not in ('.docx', '.pptx', '.xlsx'):
+        print(f"Error: Unsupported file type: {ext}", file=sys.stderr)
+        print("Supported: .docx, .pptx, .xlsx", file=sys.stderr)
+        return 1
+    
+    # Determine output path
+    if args.output_pdf:
+        output_path = Path(args.output_pdf)
+    else:
+        output_path = input_path.with_suffix('.pdf')
+    
+    # Find LibreOffice
+    lo_paths = [
+        Path("C:/Program Files/LibreOffice/program/soffice.exe"),
+        Path("C:/Program Files (x86)/LibreOffice/program/soffice.exe"),
+        Path("/usr/bin/libreoffice"),
+        Path("/usr/bin/soffice"),
+        Path("/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+    ]
+    
+    libreoffice_path = None
+    for path in lo_paths:
+        if path.exists():
+            libreoffice_path = path
+            break
+    
+    if not libreoffice_path:
+        print("Error: LibreOffice not found.", file=sys.stderr)
+        print("Install from: https://www.libreoffice.org/", file=sys.stderr)
+        return 1
+    
+    print(f"Converting: {input_path}")
+    print(f"Output: {output_path}")
+    
+    # Convert
+    cmd = [
+        str(libreoffice_path),
+        "--headless",
+        "--convert-to", "pdf",
+        "--outdir", str(output_path.parent),
+        str(input_path),
+    ]
+    
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        
+        if result.returncode != 0:
+            print(f"Error: LibreOffice conversion failed: {result.stderr}", file=sys.stderr)
+            return 1
+        
+        # LibreOffice names output based on input filename
+        generated = input_path.with_suffix(".pdf")
+        generated_in_outdir = output_path.parent / generated.name
+        
+        if generated_in_outdir != output_path and generated_in_outdir.exists():
+            shutil.move(str(generated_in_outdir), str(output_path))
+        
+        output_size = output_path.stat().st_size / 1024
+        print(f"Done: {output_path} ({output_size:.1f} KB)")
+        return 0
+        
+    except subprocess.TimeoutExpired:
+        print("Error: LibreOffice conversion timed out", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main() -> int:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -276,33 +490,36 @@ def main() -> int:
         epilog="""
 Pipelines:
   direct (1)   Direct PDF text replacement (default, fastest)
-  office (2)   PDF → Office (auto-detect DOCX/PPTX/XLSX) → Translate → PDF
+  office (2)   PDF -> Office (auto-detect DOCX/PPTX/XLSX) -> Translate -> PDF
   xliff (3)    Generate XLIFF format for CAT tools
 
 Workflow:
-  1. python main.py info input.pdf
-     Shows detected source format and recommended pipeline
-  
-  2. python main.py extract input.pdf --pipeline direct -l Hindi
+  1. python main.py extract input.pdf -l Hindi
      Creates: input.pdf_layout.json, input.pdf_translate.txt, input.pdf_translated.txt
   
-  3. Translate input.pdf_translate.txt -> input.pdf_translated.txt
+  2. Translate input.pdf_translate.txt -> input.pdf_translated.txt
      (Use LLM or CAT tool with the provided prompt)
   
-  4. python main.py merge input.pdf output.pdf --pipeline direct
-     Creates: output.pdf with translated text
+  3. python main.py merge input.pdf
+     Creates: input_translated.pdf (auto-detects pipeline from layout)
 
 Examples:
-  # Check source format
-  python main.py info document.pdf
+  # Minimal workflow (just 2 commands!)
+  python main.py extract doc.pdf -l Spanish
+  python main.py merge doc.pdf
   
-  # Direct PDF (default - fastest)
-  python main.py extract document.pdf -l Spanish
-  python main.py merge document.pdf translated.pdf
+  # Or use layout file directly
+  python main.py merge doc.pdf_layout.json
+  
+  # Specify output name
+  python main.py merge doc.pdf -o translated.pdf
+  
+  # Check source format first
+  python main.py info document.pdf
   
   # Office roundtrip (auto-detects Word/PowerPoint/Excel)
   python main.py extract document.pdf --pipeline office -l French
-  python main.py merge document.pdf translated.pdf --pipeline office
+  python main.py merge document.pdf
   
   # Force specific Office format
   python main.py extract presentation.pdf --pipeline office --office-format pptx
@@ -357,11 +574,6 @@ Examples:
         default="en",
         help="Source language code for XLIFF (default: en)",
     )
-    extract_parser.add_argument(
-        "--keep-intermediate",
-        action="store_true",
-        help="Keep intermediate Office files",
-    )
     extract_parser.set_defaults(func=extract_command)
     
     # Merge command
@@ -369,14 +581,27 @@ Examples:
         "merge",
         help="Merge translations and rebuild PDF",
     )
-    merge_parser.add_argument("input_pdf", help="Original input PDF file")
-    merge_parser.add_argument("output_pdf", help="Output PDF file path")
+    merge_parser.add_argument(
+        "input_pdf",
+        help="Input PDF file or layout JSON file (auto-detects settings)",
+    )
+    merge_parser.add_argument(
+        "output_pdf",
+        nargs="?",
+        default=None,
+        help="Output PDF (default: {input}_translated.pdf)",
+    )
+    merge_parser.add_argument(
+        "-o", "--output",
+        dest="output_pdf_opt",
+        help="Output PDF file (alternative to positional arg)",
+    )
     merge_parser.add_argument(
         "--pipeline", "-p",
         type=str,
-        default="direct",
-        choices=["direct", "1", "office", "docx", "2", "xliff", "3"],
-        help=pipeline_help,
+        default="auto",
+        choices=["auto", "direct", "1", "office", "docx", "2", "xliff", "3"],
+        help="Pipeline (default: auto-detect from layout)",
     )
     merge_parser.add_argument(
         "--office-format",
@@ -404,12 +629,24 @@ Examples:
         choices=["1", "line-by-line"],
         help="Text render method for direct pipeline (default: 1)",
     )
-    merge_parser.add_argument(
-        "--keep-intermediate",
-        action="store_true",
-        help="Keep intermediate Office files",
-    )
     merge_parser.set_defaults(func=merge_command)
+    
+    # ToPDF command - convert edited Office files to PDF
+    topdf_parser = subparsers.add_parser(
+        "topdf",
+        help="Convert edited Office file (DOCX/PPTX/XLSX) to PDF",
+    )
+    topdf_parser.add_argument(
+        "input_file",
+        help="Office file to convert (DOCX, PPTX, or XLSX)",
+    )
+    topdf_parser.add_argument(
+        "output_pdf",
+        nargs="?",
+        default=None,
+        help="Output PDF (default: same name with .pdf extension)",
+    )
+    topdf_parser.set_defaults(func=topdf_command)
     
     args = parser.parse_args()
     

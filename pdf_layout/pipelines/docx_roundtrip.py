@@ -48,7 +48,7 @@ class DocxRoundtripConfig(PipelineConfig):
     libreoffice_path: Optional[Path] = None
     
     # Whether to keep intermediate DOCX files
-    keep_intermediate: bool = False
+    keep_intermediate: bool = True
 
 
 class DocxRoundtripPipeline(TranslationPipeline):
@@ -225,10 +225,9 @@ class DocxRoundtripPipeline(TranslationPipeline):
         # Convert DOCX to PDF using LibreOffice
         self._docx_to_pdf(paths["docx_translated"], output_path)
         
-        # Cleanup if not keeping intermediates
-        if not self.config.keep_intermediate:
-            paths["docx"].unlink(missing_ok=True)
-            paths["docx_translated"].unlink(missing_ok=True)
+        # Keep intermediate files
+        print(f"  Kept: {paths['docx'].name}")
+        print(f"  Kept: {paths['docx_translated'].name}")
         
         return MergeResult(
             output_path=output_path,
@@ -322,7 +321,7 @@ class DocxRoundtripPipeline(TranslationPipeline):
 def create_docx_roundtrip_pipeline(
     target_language: str = "Hindi",
     libreoffice_path: Optional[Path] = None,
-    keep_intermediate: bool = False,
+    keep_intermediate: bool = True,
 ) -> DocxRoundtripPipeline:
     """Factory function to create DOCX roundtrip pipeline."""
     config = DocxRoundtripConfig(

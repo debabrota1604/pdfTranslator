@@ -6,6 +6,11 @@ Available pipelines:
 - DocxRoundtripPipeline: PDF → DOCX → translate → DOCX → PDF
 - OfficeRoundtripPipeline: PDF → Office (auto-detect DOCX/PPTX/XLSX) → translate → PDF
 - XLIFFPipeline: Generate XLIFF format for CAT tools
+
+Office XML Handlers:
+- DocxXMLHandler: Extract/update text in Word documents
+- PptxXMLHandler: Extract/update text in PowerPoint presentations
+- XlsxXMLHandler: Extract/update text in Excel spreadsheets
 """
 
 from .base import (
@@ -30,6 +35,15 @@ from .office_roundtrip import (
     OfficeRoundtripConfig,
     OfficeFormat,
     create_office_roundtrip_pipeline,
+)
+from .office_xml import (
+    OfficeXMLHandler,
+    DocxXMLHandler,
+    PptxXMLHandler,
+    XlsxXMLHandler,
+    TextSegment,
+    ExtractionResult,
+    get_handler,
 )
 from .xliff_format import (
     XLIFFPipeline,
@@ -95,6 +109,14 @@ __all__ = [
     "OfficeRoundtripConfig",
     "OfficeFormat",
     "create_office_roundtrip_pipeline",
+    # Office XML Handlers
+    "OfficeXMLHandler",
+    "DocxXMLHandler",
+    "PptxXMLHandler",
+    "XlsxXMLHandler",
+    "TextSegment",
+    "ExtractionResult",
+    "get_handler",
     # XLIFF
     "XLIFFPipeline",
     "XLIFFConfig",

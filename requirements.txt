@@ -1,15 +1,33 @@
-# PDF Layout-Preserving Segmentation and Reinsertion Engine
+# PDF Layout-Preserving Translation Engine
 # Requirements
 
-# PDF processing
-pymupdf>=1.23.0
+# ============================================
+# Core Dependencies (required)
+# ============================================
 
-# PDF generation (optional, for advanced rendering)
-reportlab>=4.0.0
+# PDF processing - primary library
+PyMuPDF>=1.23.0
 
-# Cairo rendering fallback (optional)
-pycairo>=1.24.0
+# ============================================
+# Office Pipeline Dependencies (optional)
+# Install for office roundtrip pipeline
+# ============================================
 
-# Testing
+# PDF to DOCX conversion
+pdf2docx>=0.5.0
+
+# PowerPoint document handling
+python-pptx>=0.6.21
+
+# Excel document handling
+openpyxl>=3.1.0
+
+# Note: LibreOffice required for Office → PDF conversion
+# Download from: https://www.libreoffice.org/
+
+# ============================================
+# Development & Testing
+# ============================================
+
 pytest>=7.0.0
 pytest-cov>=4.0.0
