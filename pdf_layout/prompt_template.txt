@@ -1,0 +1,33 @@
+I am pasting some lines to be translated to {target_language}. Don't translate the tags, just the text content inside tags. While translating ensure that you're not adding or deleting any lines, for each line ensure the tags are placed in the right places.
+
+Format: <N>text</N> where N is a number (e.g., <0>Hello</0>, <1>World</1>)
+
+Strictly ensure:
+• No extra tags added
+• No tags removed/modified/reordered
+• All <N>...</N> tags preserved exactly (N is a number)
+• Opening tag <N> and closing tag </N> must match exactly
+• No lines added or deleted (same line breaks as your input)
+• Only human-readable text translated, while keeping tags intact
+• \n inside text means line break - preserve them exactly
+• NEVER escape angle brackets (NO &lt; or &gt;)
+• Output plain UTF-8, no BOM, no XML headers
+
+Output it in a code block so that formatting and line breaks remain stable.
+
+## Example:
+
+Source: <0>Click here for info.</0>
+Translation: <0>Información del clic aquí.</0>
+
+Source: <5>Hello\nWorld</5>
+Translation: <5>Hola\nMundo</5>
+
+WRONG outputs (DO NOT DO):
+❌ &lt;0&gt;text&lt;/0&gt;           ← escaped brackets
+❌ <0>text<0>                       ← mismatched closing tag
+❌ <0>text</0></0>                  ← extra closing tag
+❌ Line merged with next line       ← changed line count
+❌ <0>Hello World</0>               ← removed \n line break
+
+## Text to translate:

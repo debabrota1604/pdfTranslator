@@ -1,0 +1,604 @@
+# PDF Translation Source File
+# Source: io\pdf_en.pdf
+# Blocks: 60 | Pages: 6
+#
+# INSTRUCTIONS FOR TRANSLATION:
+# 1. Translate the text between <<<block_id>>> and <<</block_id>>> tags
+# 2. Keep ALL tags exactly as they are (do not translate or modify tags)
+# 3. Preserve line breaks within blocks where appropriate
+# 4. Do not add or remove any blocks
+#
+# ============================================================
+
+# --- Page 1 ---
+
+<<<p1_b0>>>
+Turing AI Onboarding 
+<<</p1_b0>>>
+
+<<<p1_b1>>>
+Microsoft has 2 flavours of CoPilot – Consumer and Enterprise. Consumer is for individual 
+customers and Enterprise is for Enterprises. These two flavours are powered by independent 
+systems. Enterprise CoPilot (aka m365) has notion of 2 tabs – Work and Web. When a user is in 
+Work tab, CoPilot can access enterprise data (like documents, emails, Teams messages, SharePoint 
+sites, etc). In Web tab, it cannot access Enterprise data. Enterprise CoPilot ensures that we are 
+handling the Enterprise customers data (like queries they are asking, logging, etc) are handled in a 
+compliant manner, and we cannot access customer queries (i.e. eyes-off data), identifying logs, etc. 
+Consumer CoPilot doesn’t have these restrictions.  
+<<</p1_b1>>>
+
+<<<p1_b2>>>
+Consumer CoPilot is owned by MAI (Microsoft AI). Enterprise CoPilot is owned by the org called 
+MSAI (Microsoft Search, Assistant and Intelligence). Turing AI is part of this larger org and owns Web 
+tab. Turing AI org charter is to bring innovative (frontier) features/work to the platform, as well ensure 
+that the quality of existing features is at least at par with our main competitors like ChatGPT. 
+<<</p1_b2>>>
+
+<<<p1_b3>>>
+Enterprise CoPilot is served by a backend platform called Sydney. It is a C# based service with huge 
+amount of code base. The platform serves both Web and Work tab on M365, as well calls coming 
+from other Office products/Edge Side bar/etc. The frontend is written in ReactJS and the code base is 
+generally referred to as 1JS. The Enterprise CoPilot platform has several other components/tools, etc 
+– for example  
+<<</p1_b3>>>
+
+<<<p1_b4>>>
+1. SEVAL which is an evaluation framework for CoPilot. This manages curated datasets which are 
+used to evaluate the model performance for new releases.  
+<<</p1_b4>>>
+
+<<<p1_b5>>>
+2. CoPilot Playground: A tool (web portal) which allows you to send inputs to your chosen LLM 
+directly, and you can examine what the LLM outputs.  
+<<</p1_b5>>>
+
+<<<p1_b6>>>
+3. DevUI: This is a UI built purposefully to help examine your query sent to CoPilot, and how it 
+orchestrated the execution of the query.  
+<<</p1_b6>>>
+
+<<<p1_b7>>>
+4. Kusto: CoPilot instrumentation/metrics/logs data are stored in Kusto clusters, and we can query 
+them  
+<<</p1_b7>>>
+
+<<<p1_b8>>>
+5. CoPilot Dash: A tool (web portal) which allows us to analyse customer thumbs down/thumbs up 
+details.   
+<<</p1_b8>>>
+
+<<<p1_b9>>>
+Initially Sydney was serving both Consumer and Enterprise. Then Consumer was decoupled from it 
+totally. Also there was a fork for Web and Work, and now Web and Work are totally served by the 
+same system Sydney. While going through the documents/videos/code, ignore references to 
+sydcomp, and Avalon. Everything for Enterprise CoPilot is now a single code base and branch 
+(master). Also depending on the context in which it gets used, BizChat can mean Enterprise CoPilot 
+and sometimes Work Tab alone. CWC (Compliant Web Chat) is synonymous to Web tab.  
+<<</p1_b9>>>
+
+<<<p1_b10>>>
+Commented [AS1]: Need not get into history for a new 
+joinee of consumer copilot 
+<<</p1_b10>>>
+
+<<<p1_b11>>>
+Commented [AP2R1]: I added because it was among 
+the most confusing items for me to grasp. The references 
+of past keep coming in.  
+<<</p1_b11>>>
+
+<<<p1_b12>>>
+How does Sydney work at the core level (or for that matter any LLM works): LLMs are very 
+powerful. But they are trained on the data that was available at the time of training. So, if we pass the 
+user query directly to LLM (along with suitable prompt), it will just return an answer from it’s own 
+knowledge. To extend the knowledge and capabilities of an LLM model, we can pass specification for 
+additional capabilities to the model (like search_web, schedule_task, etc). Looking at the query, LLM 
+may decide to invoke such capabilities also called as tools or plugins). For example, in case user 
+asks “Can you share the latest market updates every weekday at 9AM”, and we have provided 
+specification of a tool called schedule_task while making call to LLM, LLM may respond by requesting 
+to invoke schedule_task tool. Now the orchestrator can analyse the response of the model and invoke 
+a code which actually schedules a task in the backend systems. Similarly, there can be tools to fetch 
+data from web, emails, etc. The tool implementation will fetch the data and provide the data back to 
+<<</p1_b12>>>
+
+<<<p1_b13>>>
+Commented [AS3R1]: Fair. In your case it was more 
+pronounced because I shared the pre-reorg onboarding 
+links (lazily).  
+<<</p1_b13>>>
+
+# --- Page 2 ---
+
+<<<p2_b0>>>
+the LLM. Now the system can again make a LLM call with the result of tool call, and LLM may decide 
+to invoke more tools, or may simply tell us that it has all the data available to respond to user (by 
+invoking a special tool say generate_response). Now the final call to LLM will generate the response 
+to the user.  
+<<</p2_b0>>>
+
+<<<p2_b1>>>
+In nutshell, this is how the core of the Sydney orchestrator (known as Flux V3) works to serve a user 
+query (obviously it is very simplified version):  
+<<</p2_b1>>>
+
+<<<p2_b2>>>
+user_query = “” //get user query 
+<<</p2_b2>>>
+
+<<<p2_b3>>>
+LLMRequest llm_request; //construct request to LLM be combining user query, reasoning LLM prompt, and other context 
+<<</p2_b3>>>
+
+<<<p2_b4>>>
+while (true) { 
+<<</p2_b4>>>
+
+<<<p2_b5>>>
+llm_response = callLLM(llm_request); 
+<<</p2_b5>>>
+
+<<<p2_b6>>>
+if llm_response has tool calls { 
+<<</p2_b6>>>
+
+<<<p2_b7>>>
+ 
+if the tool call is generate_response { 
+<<</p2_b7>>>
+
+<<<p2_b8>>>
+combine user query, all previous tool calls and their results to construct llm_request. leverage 
+prompt for responding/synthesis 
+<<</p2_b8>>>
+
+<<<p2_b9>>>
+ 
+ 
+llm_response = callLLM(llm_request); 
+<<</p2_b9>>>
+
+<<<p2_b10>>>
+ 
+ 
+return response to user 
+<<</p2_b10>>>
+
+<<<p2_b11>>>
+} 
+<<</p2_b11>>>
+
+<<<p2_b12>>>
+else { 
+<<</p2_b12>>>
+
+<<<p2_b13>>>
+ 
+call all the tools mentioned in the response and collect results 
+<<</p2_b13>>>
+
+<<<p2_b14>>>
+ 
+combine user query, all previous tool calls and their results to construct llm_request 
+<<</p2_b14>>>
+
+<<<p2_b15>>>
+} 
+<<</p2_b15>>>
+
+<<<p2_b16>>>
+} 
+<<</p2_b16>>>
+
+<<<p2_b17>>>
+} 
+<<</p2_b17>>>
+
+<<<p2_b18>>>
+Some important Acronyms 
+<<</p2_b18>>>
+
+<<<p2_b19>>>
+Acronym 
+Details 
+Turn 
+User issuing a query to LLM, and getting answer.  
+Conversation 
+User conversing with LLM where user issues a query to LLM, gets answer, asks follow up 
+quetsion, gets answer and so on. A conversation is made up of several turns.  
+Suggestion 
+Chips 
+<<</p2_b19>>>
+
+<<<p2_b20>>>
+Along with response, Sydney generates mutliple suggestions for follow up turns. User can 
+just click on them to issue query for next turn.  
+Turn N 
+All turns which are not Turn 1 
+3S 
+Substrate Search Service. It is a comprehensive search service that spans all accessible 
+shards of a tenant, aggregates results from local, group, and tenant shards, and supports 
+third-party documents via federation. The 3S API provides a universal search API for all 
+entity types and experiences, using industry-standard Elastic Search DSL 
+AAD 
+Azure Active Directory - now renamed to Entra. It is used for Service to Service Auth Token 
+ADO 
+Azure Dev Ops 
+ANN 
+Approximate Nearest Neighbour 
+AppChat (vs 
+BizChat) 
+<<</p2_b20>>>
+
+<<<p2_b21>>>
+Chat originated on apps (like Word) 
+<<</p2_b21>>>
+
+<<<p2_b22>>>
+APSAT 
+Answer Prominent Satisfaction 
+Avalon 
+Inititally there was only one Sydney powering Bing chat. Later it got bifurcated for Enterprise 
+and consumer. Project Avalon was an effort to merge them back, but later the effort was 
+stopped and they are now divergent.  
+CEA - Custom 
+Engine Agents 
+<<</p2_b22>>>
+
+<<<p2_b23>>>
+Allows users to use an orchestrator and models of their choice 
+<<</p2_b23>>>
+
+# --- Page 3 ---
+
+<<<p3_b0>>>
+CI  
+Code Interpreter. A tool/plugin which generates and executes Python code when needed. 
+For example to analyze Excel files.  
+Control Tower 
+It is an Experimentation Platform which allows to perform A/B testing 
+Crafting 
+Defining and propising, say next set of goals 
+Declarative 
+Agent (DA) 
+<<</p3_b0>>>
+
+<<<p3_b1>>>
+Allows you to create your own copilot by declaring instructions, actions, and knowledge to 
+customize Microsoft 365 Copilot. There are connectors to ingest data and plugins to call 
+services. 
+DiceBerry 
+Internal name for Analyst Agent 
+DLIS 
+Deep LEarning Inference Service 
+DRI 
+Directly Responsible Individual (kind of OnCall in ops context, otherwise STL, or Team lead) 
+DSAT 
+Customer Dissatisfaction 
+DSB 
+DSB, or Deployment Safety Board, is a critical component within Microsoft that ensures the 
+safety and compliance of deployments. The DSB Processes document outlines the various 
+stages of DSB review, including initial review, triage, and assignment of Assessment Leads 
+(ALs).  
+E+D 
+Experinces + Design 
+EDP 
+Enterprise Data Protection. Enterprise accounts have strict data protection measures, 
+including enterprise data protection (EDP) that restricts logging and ensures compliance with 
+security boundaries. 
+EUPI 
+EUPI, or End User Pseudonymous Identifiers, is an identifier created by Microsoft that is tied 
+to the user of a Microsoft service. When combined with other information, such as a mapping 
+table, EUPI can identify the end user. EUPI does not contain information uploaded or 
+created by the customer, such as Customer Content or End User Identifiable Information 
+(EUII). Common examples of EUPI include user GUIDs, PUIDs, session IDs, and salted 
+hashes of EUII 
+Falcon 
+Microservice Hosting Framework. Falcon is a versatile project within Microsoft, 
+encompassing various aspects of service deployment, orchestration, and performance. 
+FATE 
+Fairness, Accountability, Transparency, Ethics 
+Feature Crew 
+A group of people involved in testng out a feature before it gets released to wider audience.  
+Finetuning 
+(FT) 
+<<</p3_b1>>>
+
+<<<p3_b2>>>
+Model Finetuning. SFT means Supervised Fine Tuning 
+<<</p3_b2>>>
+
+<<<p3_b3>>>
+Flight  
+First time a feature is brought online infront of a group of users. Flight allows us to do A/B 
+test. 
+Flux v1 
+Initial version of Sydney orchestration. It was single call to LLM and LLM answer was 
+retruned to user 
+Flux V2 
+It was 2 step process - reasoning and responding where call goes to LLM for both these 
+steps. System goes to Reasoning step first and stays there unless all the data to answer 
+query has been ontained. Then goes to responding state to syntesize the response.  
+Frontier 
+Bring new innovative features/capabilities to product 
+IC3 
+Sydney backend storage for user conversations. IC3, or Intelligent Conversation and 
+Communications Cloud, is a platform developed by Microsoft that supports real-time 
+conversation products such as Windows Messenger, MSN Messenger, Skype, Office 
+Communicator, Lync, Skype for Business, and Microsoft Teams1. IC3 provides reliable and 
+high-quality audio and video calling, meetings, and chat services, enabling millions of 
+customers to have billions of conversations 
+ICM 
+Incident Management System. For handling Live Site issues.  
+IDL 
+Industrial Deep Learning 
+interstitial 
+messages 
+<<</p3_b3>>>
+
+<<<p3_b4>>>
+Intermediate progress messages sent to users during query execution 
+<<</p3_b4>>>
+
+<<<p3_b5>>>
+Key Vault 
+Azure Key Vault is a cloud service provided by Microsoft for securely storing and accessing 
+secrets, such as API keys, passwords, certificates, and cryptographic keys. 
+KR 
+Key Result (part of OKR - Objectives and Key Results) 
+LBO 
+Legitimate Business Operations 
+LockBox 
+Lockbox is the system that enables Torus users to request and approve permission to 
+perform privileged actions. For example, a user may submit a lockbox request to elevate 
+their account to a certain role. If the type of lockbox request is not associated with a Torus 
+eligibility, it will be sent to your default lockbox approver group. 
+Model Inner-
+loop  Metrics 
+<<</p3_b5>>>
+
+<<<p3_b6>>>
+Computed on held-out portion of the training dataset. Example metrics: AUC, precision, 
+recall, accuracy 
+MSIT 
+Microsoft Internal Team 
+OAI 
+Open AI 
+ObjectStore 
+ObjectStore is an ecosystem of services developed in the Bing and Microsoft AI Platform 
+teams. At it's core is a distributed NoSQL hash table designed for ultra low latencies, high 
+availability, high throughput, large scale, and petabyte data sizes.  
+ODB 
+OneDrive for Business 
+<<</p3_b6>>>
+
+# --- Page 4 ---
+
+<<<p4_b0>>>
+ODSP 
+OneDrive/SharePoint 
+OPG 
+Office Product Group 
+OS 
+Object Store 
+PA 
+Power Automate 
+Polymer 
+Enterprise is making all of their large language model calls with the client called Polymer. 
+Whereas as consumer uses papyrus, 
+POR  
+POR stands for "Plans of Record." These documents delineate methods of putting into effect 
+an intention or a proposal of a project, company, or business unit.  
+Power 
+Automate 
+<<</p4_b0>>>
+
+<<<p4_b1>>>
+Microsoft tool to automate workflows (like calling an API peridocially, etc) 
+<<</p4_b1>>>
+
+<<<p4_b2>>>
+PR 
+Pull request - aka Code Review 
+Pre-training 
+Training the foundation models for generic stuff 
+Prompted 
+Model 
+<<</p4_b2>>>
+
+<<<p4_b3>>>
+In this mode of using LLMs, the model is generic. While sending query to model, we provide 
+instructions and some examples on how to answer. Contrast this with Fine tuned model, for 
+which we do not need to provide any instructions as the model is fine tuned for a specific 
+task  
+RAI 
+Responsible AI 
+RF 
+Research Fellow 
+S2S 
+Service To Service  
+S3 
+Substrate Search Service 
+SAW 
+Secure Access Workstation Device. A Secure Admin Workstation (SAW) is a highly secure 
+Windows device that is used to access production resources within Microsoft.  
+SBS 
+Side By Side 
+SBSLeo 
+Side By Side Leo Metric 
+SC 
+Suggestion Chips 
+SDF 
+the SDF (Service DogFood) ring refers to a staging environment used for testing and 
+validating features before they are rolled out to MSIT or production. 
+SDS 
+Substrate Data Store 
+Semantic 
+Fabric 
+<<</p4_b3>>>
+
+<<<p4_b4>>>
+Semantic representation of all enterprise content, activities and interactions. Another person 
+mentioned it is basically converting enterprise data into vector space and index it  and now 
+MS can allow different value add on this data, like search. 
+Seval 
+Sydeny Evaluation. Kind of model evalutaion framewrok 
+SFT 
+Supervized FIne Tuning 
+Student Model 
+A smaller, more efficient model (known as the student) is trained using the outputs of a 
+larger, pre-trained model (known as the instructor). The student model learns to mimic the 
+instructor model’s behavior, achieving similar performance with reduced computational 
+requirements 
+Substrate 
+Substrate unifies all enterprise user data in once place. Creates a unified view of user data 
+and activity. It centralizes mission-critical investments in security, com pliance, and reliability 
+TAM 
+Total addressible Market 
+Tenant 
+Tenant is an entity that is created to uniquely identify a customer when they purchase a new 
+subscription. It is an instance of Online Services created in Microsoft data centers that 
+contain uniquely identified domains, users, security groups, and subscriptions. 
+Torus 
+Torus provides an access control model for O365. This access control model limits the 
+capabilities a user is granted to those specifically necessary for the requested tasks, thereby 
+increasing overall security. 
+Trouter 
+The trouter in Sydney is a service that acts as a bridge between services and client 
+application instances, maintaining connectivity and allowing for message delivery and user 
+activity reporting. The trouter service supports various functionalities, including: 
+Message Delivery: It allows partner services to send messages to client applications and 
+return responses generated on the client applications or the trouter service1. 
+User Activity Reporting: It passes user activity state to the Registrar Activity Service, as 
+reported by the client application. 
+Event Notifications: The trouter service is used to send event notifications, such as video 
+generation updates and async task completions.  
+ 
+Trouter is used for realtime notifications between service and clients. Trouter and related 
+services are used by Teams for realtime notification 
+TuringAtWork 
+TuringAtWork is the old  repository where the Sydney codebase resided. 
+Variant 
+kind of feature flag 
+PII 
+Personally Identifiable Information.  
+BCX 
+BCX stands for Business Connexion. It is a project at Microsoft that involves various 
+activities such as feature reviews, readiness reviews, and craftsmanship reviews to ensure 
+high-quality development processes for BizChat. There is also an org for BCX which owns 
+frontend development for BizChat 
+<<</p4_b4>>>
+
+# --- Page 5 ---
+
+<<<p5_b0>>>
+CIQ 
+Context IQ. When we type a '/' in co-pilot, it allows us to mention someone, schedule 
+meeting, etc. 
+RockSteady 
+As part of the Rocksteady initiative, significant efforts are being made to enhance the 
+navigation pane experience across various endpoints. The Navigation Pane refers to the 
+main navigation area of BizChat (currently located on the right-hand side) of the application 
+that stores chat sessions, agents, and offers opportunities to upsell depending on the 
+customer segment 
+Pill 
+A suggestion in Suggestion chips 
+PCNs 
+aka Job reqs 
+ECS Flight 
+Flight controlled by client side - this enables flag in client side 
+ExP Flight 
+Server side flight - here server intercepts/connects with ExP tower to put users in cohorts 
+and applies treatment flags for cohorts 
+Liquid 
+Templating language used in Sydney to configure prompts 
+Option Sets 
+OptionsSets are JSON configuration files where multiple configuration options are specified. 
+They override default values for configurations. Multiple option sets can be applied to the 
+same request. README.md - Repos 
+Extensions 
+to integrate your own service or rules into the pipeline without changing any code in this 
+repository.  README.md - Repos 
+<<</p5_b0>>>
+
+<<<p5_b1>>>
+Extra Contents to go through: 
+<<</p5_b1>>>
+
+<<<p5_b2>>>
+1. 
+Open AI Chat Completion API format (currently used in Sydney): https://platform.openai.com/docs/api-
+reference/chat/create 
+<<</p5_b2>>>
+
+<<<p5_b3>>>
+2. 
+Liquid templating (just basic overview): https://shopify.github.io/liquid/ and 
+https://github.com/sebastienros/fluid 
+<<</p5_b3>>>
+
+<<<p5_b4>>>
+3. 
+Liquid Templating Library used for Prompt Building (just basic overview): https://deanebarker.net/tech/fluid/ 
+<<</p5_b4>>>
+
+<<<p5_b5>>>
+4. 
+Liquid Prompt Builder Format Guide | Sydney Copilot Platform 
+<<</p5_b5>>>
+
+<<<p5_b6>>>
+5. 
+Experimenting with Prompt & Tool Changes in FluxV3: 
+https://o365exchange.visualstudio.com/O365%20Core/_wiki/wikis/Enterprise%20Sydney%20WIKI/538491/Exp… 
+<<</p5_b6>>>
+
+<<<p5_b7>>>
+Onboarding Steps to follow 
+<<</p5_b7>>>
+
+<<<p5_b8>>>
+One of the most important step to perform (once your laptop is setup), is to request for CompliantSydney access 
+via Pulse and Enterprise Sydney Team Contributors (important to get access to WIKIS) via Myaccess Portal . This 
+will allow you to access Sydney related Wikis/Code bases, etc.  
+ 
+How to request for CompliantSydney access: 
+Go to: Identity - M365 Pulse 
+Search for CompliantSydney in Operational Eligibilites, Click on CompliantSydney, and Submit Request. You will 
+need to complete the pre-requisites (Required Clearances) before you can request. Complete those pre-requsites.  
+<<</p5_b8>>>
+
+# --- Page 6 ---
+
+<<<p6_b0>>>
+ 
+Once clearences are done, raise the ComplientSydney request again. 
+ 
+How to request for Enterprise Sydney Team Contributors: 
+Go to: My Access Portal 
+Search for “Enterprise Sydney Team Contributors” access package. 
+Submit your request. You’ll need to have completed required training (Security Foundations, Privacy 
+Fundamentals) and your manager’s approval may be required. Post your manager’s approval, there would be one 
+more approval required which might take 1-2 days. 
+ 
+In case of any question (whatever it could be), always try searching for it in CoPilot Work Tab 
+Request for permissions listed in Dev Onboarding (you may be able to access this only once you have acquired 
+CompliantSydney access) : Developer-Onboarding | M365 Chat Platform (aka compliant-sydney) 
+Setup your dev box (aka remote dev machine assigned to you). Go to Microsoft Dev Box and create a new dev box. 
+BasicDevBox with 1ESBasicDevBoxWeekly image should be Ok. Chose region as Central India. Let the dev box get 
+created. Use Virtual DevBox Onboarding (VDB) - Overview to download Remote Desktop Software to connect to 
+the Dev Box 
+Use Running the Setup Script | M365 Chat Platform (aka compliant-sydney) to run Sydney Locally. Download code 
+at root drive (say Q:\Sydney as lately there are some large file names which do not get cloned and causes 
+problems). With this, Sydney will run locally and it will launch Dev Box Ui which you can use to interact with 
+Sydney. In case of any troubleshooting, search for issue in Teams – most likely others would have faced the similar 
+issue in the past. In case it takes more than 1-2 hours to run Sydney locally, reach out to existing team members.  
+Bookmark Sydney Wiki: Engineering Hub (I guess this is also another wiki: Wiki - Overview) and Sydney Repo: 
+Sydney - Repos . Explore Wiki, introduction videos, and basic rampup docs on LLMs, etc 
+Get familiar with ways of doing Prompt iterations: Experimenting with Prompt & Tool Changes in FluxV3 - 
+Overview This will need DevUI setup (Dev UI - Overview)  
+ 
+By this time, your setup should include a DevBox, your laptop or DevBox running Git, Visual studio, WSL (if 
+comfortable with Linux), running Sydney locally, and be able to try out prompt changes & see them 
+through DevUI.  
+ 
+<<</p6_b0>>>

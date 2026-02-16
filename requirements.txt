@@ -1,0 +1,15 @@
+# PDF Layout-Preserving Segmentation and Reinsertion Engine
+# Requirements
+
+# PDF processing
+pymupdf>=1.23.0
+
+# PDF generation (optional, for advanced rendering)
+reportlab>=4.0.0
+
+# Cairo rendering fallback (optional)
+pycairo>=1.24.0
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
