@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 from pdf_layout.extractor import extract_pdf_layout
-from pdf_layout.rebuilder_unicode import PDFRebuilder, RebuildConfig, rebuild_pdf
+from pdf_layout.rebuilder_unicode import PDFRebuilder, RebuildConfig, RenderMethod, rebuild_pdf
 from pdf_layout.translation_io import (
     generate_translate_file,
     generate_translated_template,
@@ -111,7 +111,21 @@ def merge_command(args: argparse.Namespace) -> int:
         
         # Rebuild PDF
         print(f"Rebuilding: {output_pdf}")
+        
+        # Parse render method
+        render_method = RenderMethod.LINE_BY_LINE  # Default
+        if hasattr(args, 'render_method') and args.render_method:
+            method_map = {
+                '1': RenderMethod.LINE_BY_LINE,
+                'line-by-line': RenderMethod.LINE_BY_LINE,
+                # Future methods:
+                # '2': RenderMethod.WORD_WRAP,
+                # 'word-wrap': RenderMethod.WORD_WRAP,
+            }
+            render_method = method_map.get(args.render_method.lower(), RenderMethod.LINE_BY_LINE)
+        
         config = RebuildConfig(
+            render_method=render_method,
             min_font_size=args.min_font_size,
             font_step=args.font_step,
         )
@@ -182,6 +196,13 @@ Workflow:
         type=float,
         default=0.5,
         help="Font size step (default: 0.5)",
+    )
+    merge_parser.add_argument(
+        "--render-method",
+        type=str,
+        default="1",
+        choices=["1", "line-by-line"],
+        help="Text render method: 1/line-by-line (default: 1)",
     )
     merge_parser.set_defaults(func=merge_command)
     

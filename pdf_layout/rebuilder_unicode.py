@@ -3,18 +3,33 @@ PDF Rebuilder Module with Unicode support using PyMuPDF TextWriter.
 
 Rebuilds PDF with translated text while preserving layout.
 Uses embedded TrueType fonts for proper multilingual text rendering.
+
+Render Methods:
+- Method 1 (LINE_BY_LINE): Replace text line by line, preserving original line breaks.
+  Trade-off: Good for similar-length translations, may overflow for longer translations.
+- Future methods will be added here.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, Optional, Union
 
 import fitz  # PyMuPDF
 
 from .extractor import DocumentData, PageData, BlockData
+
+
+class RenderMethod(Enum):
+    """Text rendering method for PDF rebuilding."""
+    LINE_BY_LINE = 1  # Preserve line breaks, scale font to fit
+    # Future methods:
+    # WORD_WRAP = 2       # Reflow text within box, ignore original line breaks
+    # HYBRID = 3          # Try line-by-line first, fall back to word wrap
+    # PARAGRAPH_REFLOW = 4  # Paragraph-level intelligent reflow
 
 
 # Default Unicode font paths for different platforms
@@ -47,11 +62,17 @@ def _contains_non_latin(text: str) -> bool:
 class RebuildConfig:
     """Configuration for PDF rebuilding."""
     
+    # Render method selection
+    render_method: RenderMethod = RenderMethod.LINE_BY_LINE
+    
+    # Font settings
     min_font_size: float = 6.0
     font_step: float = 0.5
-    overlay_color: tuple[float, float, float] = (1.0, 1.0, 1.0)  # White
     unicode_font_path: Optional[Path] = field(default_factory=_find_unicode_font)
     fallback_font: str = "helv"
+    
+    # Visual settings
+    overlay_color: tuple[float, float, float] = (1.0, 1.0, 1.0)  # White
 
 
 class PDFRebuilder:
@@ -156,7 +177,33 @@ class PDFRebuilder:
         block: BlockData,
         text: str,
     ) -> None:
-        """Insert text into a block area using TextWriter for Unicode support."""
+        """Insert text into a block area.
+        
+        Dispatches to appropriate render method based on config.
+        """
+        if self.config.render_method == RenderMethod.LINE_BY_LINE:
+            self._insert_text_line_by_line(page, block, text)
+        # Future methods:
+        # elif self.config.render_method == RenderMethod.WORD_WRAP:
+        #     self._insert_text_word_wrap(page, block, text)
+        # elif self.config.render_method == RenderMethod.HYBRID:
+        #     self._insert_text_hybrid(page, block, text)
+        else:
+            # Default to line-by-line
+            self._insert_text_line_by_line(page, block, text)
+    
+    def _insert_text_line_by_line(
+        self,
+        page: fitz.Page,
+        block: BlockData,
+        text: str,
+    ) -> None:
+        """Method 1: Line-by-line replacement.
+        
+        Preserves original line breaks from source text.
+        Scales font to fit within bounding box.
+        Trade-off: Good for similar-length translations, may overflow for longer text.
+        """
         rect = fitz.Rect(block.bbox)
         use_unicode = _contains_non_latin(text) and self._unicode_font is not None
         

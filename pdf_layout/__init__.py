@@ -2,7 +2,7 @@
 
 from .extractor import PDFExtractor, PageData, BlockData
 from .segmenter import PDFSegmenter
-from .rebuilder_unicode import PDFRebuilder, RebuildConfig
+from .rebuilder_unicode import PDFRebuilder, RebuildConfig, RenderMethod
 from .translation_io import (
     generate_translate_file,
     generate_translated_template,
@@ -16,6 +16,7 @@ __all__ = [
     "PDFSegmenter", 
     "PDFRebuilder",
     "RebuildConfig",
+    "RenderMethod",
     "PageData",
     "BlockData",
     "generate_translate_file",
