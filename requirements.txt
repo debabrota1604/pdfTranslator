@@ -1,16 +1,26 @@
 # PDF Layout-Preserving Translation Engine
 # Requirements
+#
+# Quick Install:
+#   pip install -r requirements.txt
+#
+# Core only:
+#   pip install PyMuPDF
+#
+# With all optional features:
+#   pip install PyMuPDF pdf2docx python-pptx openpyxl translate-toolkit pikepdf
 
 # ============================================
-# Core Dependencies (required)
+# Core Dependencies (REQUIRED)
 # ============================================
 
-# PDF processing - primary library
+# PDF processing - primary library for all pipelines
+# Used by: direct, xliff, html pipelines
 PyMuPDF>=1.23.0
 
 # ============================================
-# Office Pipeline Dependencies (optional)
-# Install for office roundtrip pipeline
+# Office Pipeline Dependencies (OPTIONAL)
+# Required for: --pipeline office, --pipeline cat
 # ============================================
 
 # PDF to DOCX conversion
@@ -22,16 +32,38 @@ python-pptx>=0.6.21
 # Excel document handling
 openpyxl>=3.1.0
 
-# Note: LibreOffice required for Office → PDF conversion
+# IMPORTANT: LibreOffice required for Office → PDF conversion
 # Download from: https://www.libreoffice.org/
+# The 'soffice' command must be accessible in PATH
 
 # ============================================
-# CAT Format Dependencies (optional)
-# Install for XLIFF/TMX/Moses formats
+# CAT/Translation Format Dependencies (OPTIONAL)
+# Required for: --pipeline xliff (OASIS compliance)
 # ============================================
 
-# Industry-standard translation toolkit with XLIFF 1.2/2.0, TMX, Moses support
+# Industry-standard translation toolkit
+# Provides: XLIFF 1.2/2.0, TMX, Moses format support
 translate-toolkit>=3.10.0
+
+# ============================================
+# PikePDF Low-Level Pipeline (OPTIONAL)
+# Required for: --pipeline pikepdf
+# ============================================
+
+# Low-level PDF content stream manipulation
+# Fastest pipeline (~0.1s) but Latin-only text support
+pikepdf>=8.0.0
+
+# ============================================
+# HTML Intermediate Pipeline (OPTIONAL)
+# Required for: --pipeline html (advanced features)
+# ============================================
+
+# HTML to PDF rendering with full CSS support
+# Note: Has system dependencies (GTK3/Pango on Windows)
+# If not installed, pipeline falls back to PyMuPDF rendering
+# Uncomment to enable:
+# weasyprint>=60.0
 
 # ============================================
 # Development & Testing

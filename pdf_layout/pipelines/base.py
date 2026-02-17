@@ -18,10 +18,12 @@ from typing import Any, Optional
 
 class PipelineType(Enum):
     """Available translation pipelines."""
-    DIRECT_PDF = "direct"       # Direct PDF manipulation (current approach)
-    DOCX_ROUNDTRIP = "docx"     # PDF → DOCX → translate → DOCX → PDF
-    XLIFF = "xliff"             # Generate XLIFF format for CAT tools
-    OFFICE_CAT = "office_cat"   # PDF → Office → Moses/XLIFF → Office → PDF
+    DIRECT_PDF = "direct"           # Direct PDF manipulation (current approach)
+    DOCX_ROUNDTRIP = "docx"         # PDF → DOCX → translate → DOCX → PDF
+    XLIFF = "xliff"                 # Generate XLIFF format for CAT tools
+    OFFICE_CAT = "office_cat"       # PDF → Office → Moses/XLIFF → Office → PDF
+    PIKEPDF_LOWLEVEL = "pikepdf"    # Low-level content stream manipulation
+    HTML_INTERMEDIATE = "html"      # PDF → HTML (CSS positioned) → PDF
 
 
 @dataclass

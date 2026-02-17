@@ -24,6 +24,7 @@ from .base import (
 from .direct_pdf import (
     DirectPDFPipeline,
     DirectPDFConfig,
+    RenderMethod,
     create_direct_pdf_pipeline,
 )
 from .docx_roundtrip import (
@@ -57,6 +58,16 @@ from .office_cat import (
     OfficeCATConfig,
     CATFormat,
     create_office_cat_pipeline,
+)
+from .pikepdf_lowlevel import (
+    PikePDFPipeline,
+    PikePDFConfig,
+    create_pikepdf_pipeline,
+)
+from .html_intermediate import (
+    HTMLIntermediatePipeline,
+    HTMLConfig,
+    create_html_pipeline,
 )
 
 
@@ -97,6 +108,16 @@ def create_pipeline(
             target_language=target_language,
             **kwargs,
         )
+    elif pipeline_type == PipelineType.PIKEPDF_LOWLEVEL:
+        return create_pikepdf_pipeline(
+            target_language=target_language,
+            **kwargs,
+        )
+    elif pipeline_type == PipelineType.HTML_INTERMEDIATE:
+        return create_html_pipeline(
+            target_language=target_language,
+            **kwargs,
+        )
     else:
         raise ValueError(f"Unknown pipeline type: {pipeline_type}")
 
@@ -111,6 +132,7 @@ __all__ = [
     # DirectPDF
     "DirectPDFPipeline",
     "DirectPDFConfig",
+    "RenderMethod",
     "create_direct_pdf_pipeline",
     # DOCX Roundtrip (legacy)
     "DocxRoundtripPipeline",
@@ -139,6 +161,14 @@ __all__ = [
     "XLIFFConfig",
     "XLIFFVersion",
     "create_xliff_pipeline",
+    # PikePDF Low-Level
+    "PikePDFPipeline",
+    "PikePDFConfig",
+    "create_pikepdf_pipeline",
+    # HTML Intermediate
+    "HTMLIntermediatePipeline",
+    "HTMLConfig",
+    "create_html_pipeline",
     # Factory
     "create_pipeline",
 ]

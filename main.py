@@ -26,15 +26,17 @@ from pdf_layout.pipelines import (
     create_office_roundtrip_pipeline,
     create_xliff_pipeline,
     create_office_cat_pipeline,
+    create_pikepdf_pipeline,
+    create_html_pipeline,
     OfficeFormat,
     CATFormat,
+    RenderMethod,
 )
 from pdf_layout.source_detector import (
     detect_source_format,
     get_recommended_pipeline,
     SourceFormat,
 )
-from pdf_layout.rebuilder_unicode import RenderMethod
 
 
 # Map CLI names to pipeline types
@@ -50,6 +52,11 @@ PIPELINE_MAP = {
     "cat": PipelineType.OFFICE_CAT,
     "moses": PipelineType.OFFICE_CAT,
     "4": PipelineType.OFFICE_CAT,
+    "pikepdf": PipelineType.PIKEPDF_LOWLEVEL,
+    "lowlevel": PipelineType.PIKEPDF_LOWLEVEL,
+    "5": PipelineType.PIKEPDF_LOWLEVEL,
+    "html": PipelineType.HTML_INTERMEDIATE,
+    "6": PipelineType.HTML_INTERMEDIATE,
 }
 
 CAT_FORMAT_MAP = {
@@ -58,11 +65,13 @@ CAT_FORMAT_MAP = {
 }
 
 RENDER_METHOD_MAP = {
-    "1": RenderMethod.LINE_BY_LINE,
+    "1": RenderMethod.REDACT_INSERT,
+    "redact": RenderMethod.REDACT_INSERT,
+    "redact-insert": RenderMethod.REDACT_INSERT,
+    "2": RenderMethod.LINE_BY_LINE,
     "line-by-line": RenderMethod.LINE_BY_LINE,
-    # Future methods:
-    # "2": RenderMethod.WORD_WRAP,
-    # "word-wrap": RenderMethod.WORD_WRAP,
+    "3": RenderMethod.TEXTBOX_REFLOW,
+    "reflow": RenderMethod.TEXTBOX_REFLOW,
 }
 
 OFFICE_FORMAT_MAP = {
@@ -165,6 +174,14 @@ def extract_command(args: argparse.Namespace) -> int:
                 cat_format=cat_format,
                 encoding=getattr(args, 'encoding', 'utf-8'),
             )
+        elif pipeline_type == PipelineType.PIKEPDF_LOWLEVEL:
+            pipeline = create_pikepdf_pipeline(
+                target_language=target_lang,
+            )
+        elif pipeline_type == PipelineType.HTML_INTERMEDIATE:
+            pipeline = create_html_pipeline(
+                target_language=target_lang,
+            )
         else:
             pipeline = create_direct_pdf_pipeline(target_language=target_lang)
         
@@ -246,6 +263,10 @@ def merge_command(args: argparse.Namespace) -> int:
             pipeline_type = PipelineType.XLIFF
         elif stored_pipeline == "office_cat":
             pipeline_type = PipelineType.OFFICE_CAT
+        elif stored_pipeline == "pikepdf_lowlevel":
+            pipeline_type = PipelineType.PIKEPDF_LOWLEVEL
+        elif stored_pipeline == "html_intermediate":
+            pipeline_type = PipelineType.HTML_INTERMEDIATE
         else:
             pipeline_type = PipelineType.DIRECT_PDF
         target_lang = target_lang or layout.get("target_language", "Hindi")
@@ -296,6 +317,14 @@ def merge_command(args: argparse.Namespace) -> int:
                 office_format=office_format,
                 cat_format=cat_format,
                 encoding=getattr(args, 'encoding', 'utf-8'),
+            )
+        elif pipeline_type == PipelineType.PIKEPDF_LOWLEVEL:
+            pipeline = create_pikepdf_pipeline(
+                target_language=target_lang,
+            )
+        elif pipeline_type == PipelineType.HTML_INTERMEDIATE:
+            pipeline = create_html_pipeline(
+                target_language=target_lang,
             )
         else:
             pipeline = create_direct_pdf_pipeline(target_language=target_lang)
@@ -372,6 +401,10 @@ def _merge_from_layout(layout_path: Path, args: argparse.Namespace) -> int:
         pipeline_type = PipelineType.XLIFF
     elif stored_pipeline == "office_cat":
         pipeline_type = PipelineType.OFFICE_CAT
+    elif stored_pipeline == "pikepdf_lowlevel":
+        pipeline_type = PipelineType.PIKEPDF_LOWLEVEL
+    elif stored_pipeline == "html_intermediate":
+        pipeline_type = PipelineType.HTML_INTERMEDIATE
     else:
         pipeline_type = PipelineType.DIRECT_PDF
     
@@ -418,6 +451,14 @@ def _merge_from_layout(layout_path: Path, args: argparse.Namespace) -> int:
                 office_format=office_format,
                 cat_format=cat_format,
                 encoding=layout.get("encoding", "utf-8"),
+            )
+        elif pipeline_type == PipelineType.PIKEPDF_LOWLEVEL:
+            pipeline = create_pikepdf_pipeline(
+                target_language=target_lang,
+            )
+        elif pipeline_type == PipelineType.HTML_INTERMEDIATE:
+            pipeline = create_html_pipeline(
+                target_language=target_lang,
             )
         else:
             pipeline = create_direct_pdf_pipeline(target_language=target_lang)
@@ -552,10 +593,12 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Pipelines:
-  direct (1)   Direct PDF text replacement (default, fastest)
+  direct (1)   Direct PDF text replacement (Unicode-friendly)
   office (2)   PDF -> Office (auto-detect DOCX/PPTX/XLSX) -> Translate -> PDF
   xliff (3)    Generate XLIFF format for CAT tools
   cat (4)      PDF -> Office -> Moses/XLIFF -> Office -> PDF
+  pikepdf (5)  Low-level content stream manipulation (fastest, Latin-only)
+  html (6)     PDF -> HTML (CSS positioned) -> Translate -> PDF
 
 CAT Formats (for cat pipeline):
   moses        Parallel text files (source.txt, target.txt) - line-by-line
@@ -608,7 +651,7 @@ Examples:
     info_parser.set_defaults(func=info_command)
     
     # Common options
-    pipeline_help = "Translation pipeline: direct/1, office/docx/2, xliff/3, cat/moses/4 (default)"
+    pipeline_help = "Translation pipeline: direct/1, office/2, xliff/3, cat/4, pikepdf/5, html/6"
     office_format_help = "Office format: auto (default), docx, pptx, xlsx"
     cat_format_help = "CAT output format: moses (default), xliff"
     
@@ -627,7 +670,7 @@ Examples:
         "--pipeline", "-p",
         type=str,
         default="cat",
-        choices=["direct", "1", "office", "docx", "2", "xliff", "3", "cat", "moses", "4"],
+        choices=["direct", "1", "office", "docx", "2", "xliff", "3", "cat", "moses", "4", "pikepdf", "lowlevel", "5", "html", "6"],
         help=pipeline_help,
     )
     extract_parser.add_argument(
@@ -682,7 +725,7 @@ Examples:
         "--pipeline", "-p",
         type=str,
         default="auto",
-        choices=["auto", "direct", "1", "office", "docx", "2", "xliff", "3", "cat", "moses", "4"],
+        choices=["auto", "direct", "1", "office", "docx", "2", "xliff", "3", "cat", "moses", "4", "pikepdf", "lowlevel", "5", "html", "6"],
         help="Pipeline (default: auto-detect from layout)",
     )
     merge_parser.add_argument(

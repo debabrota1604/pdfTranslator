@@ -67,7 +67,7 @@ python main.py extract <input.pdf> [options]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-l, --language` | Hindi | Target language for translation |
-| `-p, --pipeline` | cat | Pipeline: `direct`, `office`, `xliff`, `cat` |
+| `-p, --pipeline` | cat | Pipeline: `direct`, `office`, `xliff`, `cat`, `pikepdf`, `html` |
 | `--office-format` | auto | Office format: `auto`, `docx`, `pptx`, `xlsx` |
 | `--cat-format` | moses | CAT output: `moses`, `xliff` (for cat pipeline) |
 | `--source-language` | en | Source language code for XLIFF |
@@ -88,7 +88,7 @@ python main.py merge <input.pdf> [output.pdf] [options]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `-o, --output` | `{input}_translated.pdf` | Output PDF path |
-| `-p, --pipeline` | auto | Auto-detects from layout.json (`direct`, `office`, `xliff`, `cat`) |
+| `-p, --pipeline` | auto | Auto-detects from layout.json (`direct`, `office`, `xliff`, `cat`, `pikepdf`, `html`) |
 | `--encoding` | utf-8 | Text file encoding for Moses/text input |
 | `--min-font-size` | 6.0 | Minimum font size threshold |
 | `--font-step` | 0.5 | Font size reduction step |
@@ -141,48 +141,114 @@ python main.py topdf presentation_translated.pptx final_output.pdf
 
 ## Pipelines
 
-### Direct PDF (default)
-Fast, direct PDF text replacement using PyMuPDF.
+### Overview
+
+| # | Pipeline | CLI Flag | Speed | Best For |
+|---|----------|----------|-------|----------|
+| 1 | Direct PDF | `--pipeline direct` | **~0.3s** | Unicode text (Hindi, Bengali, Arabic, CJK) |
+| 2 | Office Roundtrip | `--pipeline office` | ~30s | Complex layouts, Office-origin PDFs |
+| 3 | XLIFF | `--pipeline xliff` | ~2s | Professional CAT tools |
+| 4 | Office CAT | `--pipeline cat` (default) | ~30s | Moses/XLIFF + Office conversion |
+| 5 | PikePDF Low-Level | `--pipeline pikepdf` | **~0.1s** | Latin-only text, maximum speed |
+| 6 | HTML Intermediate | `--pipeline html` | ~0.3s | Visual preview, browser editing |
+
+### 1. Direct PDF (Redact+Insert) - Fastest
+
+```
+PDF → Extract text+positions → [Translate] → Redact+Insert → PDF
+```
 
 ```bash
-python main.py extract doc.pdf -l Hindi
+python main.py extract doc.pdf --pipeline direct -l Hindi
 python main.py merge doc.pdf
 ```
 
-**Pros:** Fast, no external dependencies
-**Cons:** Limited text reflow
+**How it works:**
+- Uses PyMuPDF to extract text blocks with exact bounding boxes
+- Redacts (removes) original text with white overlay
+- Inserts translations at exact same positions using TextWriter
+- Embeds Unicode fonts (Nirmala UI) for non-Latin scripts (Bengali, Hindi, etc.)
+- Auto-scales font size when translations are longer than original
 
-### Office Roundtrip
-Converts PDF → Office format → translates XML → converts back to PDF.
+**Pros:** 
+- Fastest (~0.3s for typical PDF)
+- No external dependencies beyond PyMuPDF
+- Preserves images, vectors, and original layout perfectly
+
+**Cons:** 
+- Limited text reflow for significantly longer translations
+- Text may be truncated if box is too small
+
+### 2. Office Roundtrip
+
+```
+PDF → Office (DOCX/PPTX/XLSX) → Extract XML text → [Translate] → Update XML → Office → PDF
+```
 
 ```bash
 python main.py extract doc.pdf --pipeline office -l French
 python main.py merge doc.pdf
 ```
 
-Requires LibreOffice for Office → PDF conversion.
+**How it works:**
+- Auto-detects source format from PDF metadata (Word, PowerPoint, Excel)
+- Converts PDF to Office format using pdf2docx/python-pptx/openpyxl
+- Extracts text from Office XML structure
+- Updates XML with translations preserving formatting
+- Converts back to PDF via LibreOffice
+- Extracts and preserves images, SmartArt graphics
+- Converts PDF annotations to Word comments
 
-**Auto-detects format from metadata:**
+**Auto-detects format:**
 - DOCX for Word documents
 - PPTX for PowerPoint presentations  
 - XLSX for Excel spreadsheets
 
-### XLIFF Export
-Generates industry-standard XLIFF for professional CAT tools.
+**Requires:** LibreOffice for Office → PDF conversion
+
+**Pros:**
+- Best formatting preservation for Office-origin PDFs
+- Handles complex layouts, tables, images
+- Intermediate Office files can be manually edited
+
+**Cons:** 
+- Slower (~30s)
+- Requires LibreOffice installation
+
+### 3. XLIFF Export
+
+```
+PDF → Extract text → Generate XLIFF 1.2 → [CAT Tool Translation] → Parse XLIFF → PDF
+```
 
 ```bash
 python main.py extract doc.pdf --pipeline xliff -l German
-# Edit input.pdf.xlf in your CAT tool
+# Edit input.pdf.xlf in your CAT tool (SDL Trados, memoQ, OmegaT)
 python main.py merge doc.pdf
 ```
 
-### Office CAT Pipeline (Moses/XLIFF)
-PDF → Office → Moses/XLIFF format → Office → PDF.
+**How it works:**
+- Extracts text blocks from PDF
+- Generates OASIS XLIFF 1.2 compliant file using translate-toolkit
+- Compatible with professional CAT tools
+- Parses translated XLIFF and rebuilds PDF
 
-Best for professional translators using CAT tools or Moses-based MT systems.
+**Pros:**
+- Industry-standard format
+- Works with any CAT tool
+- Translation memory integration
+
+**Cons:**
+- Requires translate-toolkit for full compliance
+
+### 4. Office CAT Pipeline (Default)
+
+```
+PDF → Office → Moses/XLIFF text files → [Translate] → Update Office → PDF
+```
 
 ```bash
-# Moses format (parallel text files)
+# Moses format (simple parallel text files)
 python main.py extract doc.pdf --pipeline cat --cat-format moses -l Spanish
 # Edit *_target.txt (one segment per line)
 python main.py merge doc.pdf
@@ -193,6 +259,16 @@ python main.py extract doc.pdf --pipeline cat --cat-format xliff -l French
 python main.py merge doc.pdf
 ```
 
+**How it works:**
+- Combines Office conversion with CAT-friendly output formats
+- **Moses format**: Simple parallel text files (`source.txt`, `target.txt`)
+  - One segment per line
+  - `<br>` markers for line breaks within segments
+  - Easy to edit in any text editor
+- **XLIFF format**: XML for professional CAT tools
+- Updates Office XML with translations
+- Converts to PDF via LibreOffice
+
 **Moses format output:**
 - `*_source.txt` - Source text (one segment per line)
 - `*_target.txt` - Target text (translate this file)
@@ -201,16 +277,124 @@ python main.py merge doc.pdf
 **XLIFF format output:**
 - `*.xlf` - XLIFF 1.2 file (OASIS compliant when translate-toolkit is installed)
 
-**Standards Compliance:**
-XLIFF generation uses [translate-toolkit](https://toolkit.translatehouse.org/) for OASIS XLIFF 1.2 compliance. Install with:
-```bash
-pip install translate-toolkit
+**Pros:** 
+- Best balance of quality and translator-friendly format
+- Works with Moses MT systems
+- Industry-standard XLIFF option
+
+**Cons:** 
+- Slower (~30s)
+- Requires LibreOffice
+
+### 5. PikePDF Low-Level Pipeline - Maximum Speed
+
+```
+PDF → Parse content streams → [Translate] → Rewrite streams → PDF
 ```
 
-Without translate-toolkit, a basic XLIFF implementation is used as fallback.
+```bash
+python main.py extract doc.pdf --pipeline pikepdf -l Spanish
+python main.py merge doc.pdf
+```
 
-**Pros:** Industry-standard formats, works with any CAT tool (SDL Trados, memoQ, OmegaT, etc.)
-**Cons:** Requires LibreOffice
+**How it works:**
+- Directly parses PDF content streams (raw PDF operators)
+- Extracts text from Tj/TJ text operators
+- Rewrites content streams with translations
+- Preserves all PDF structure exactly
+
+**Performance:**
+- Extraction: ~0.07s
+- Merge: ~0.1s
+- Fastest possible PDF manipulation
+
+**Output files:**
+- `*_source.txt` - Source text (one operator per line)
+- `*_target.txt` - Target text (translate this file)
+- `*_layout.json` - Operator positions and metadata
+
+**Pros:** 
+- **Absolutely fastest** - directly manipulates PDF bytes
+- Perfect structure preservation
+- No intermediate format conversion
+
+**Cons:** 
+- **Unicode NOT supported** (Bengali, Hindi, Arabic, CJK)
+- Only works with Latin/ASCII text
+- May have issues with complex font encodings
+
+**Best for:**
+- European language translations (Spanish, French, German, etc.)
+- Maximum throughput requirements
+- PDFs with simple text structure
+
+**NOT recommended for:**
+- Indian languages (Hindi, Bengali, Tamil, etc.)
+- Arabic, Hebrew, or CJK languages
+- Any non-Latin scripts
+
+For Unicode languages, use `--pipeline direct` instead.
+
+### 6. HTML Intermediate Pipeline - Visual Preview
+
+```
+PDF → HTML (CSS positioned) → [Translate] → PDF
+```
+
+```bash
+python main.py extract doc.pdf --pipeline html -l Bengali
+python main.py merge doc.pdf
+```
+
+**How it works:**
+- Extracts text with exact positions from PDF
+- Generates HTML with absolute-positioned CSS divs
+- Includes Google Fonts for Unicode support
+- Creates visual preview HTML (openable in browser)
+- Renders back to PDF via PyMuPDF
+
+**Output files:**
+- `*_preview.html` - Visual preview (open in browser to see layout)
+- `*_source.txt` - Source text (one segment per line)
+- `*_target.txt` - Target text (translate this file)
+- `*_translated.html` - Preview with translations
+- `*_translated.pdf` - Final output
+
+**Pros:** 
+- Visual preview before final PDF
+- Edit/inspect in browser
+- Full Unicode support with embedded fonts
+- CSS-based layout preservation
+
+**Cons:** 
+- Slightly larger output files
+- Layout may differ slightly from original
+
+**Best for:**
+- Documents where you want visual verification
+- When manual position adjustments might be needed
+- Unicode translations (Hindi, Bengali, Arabic, etc.)
+
+### Pipeline Auto-Detection
+
+During merge, the pipeline is **automatically detected** from the layout JSON file:
+
+```bash
+# These are equivalent - pipeline auto-detected from layout file:
+python main.py merge doc.pdf
+python main.py merge doc.pdf --pipeline auto
+
+# Explicit pipeline (overrides auto-detection):
+python main.py merge doc.pdf --pipeline direct
+```
+
+The layout JSON stores which pipeline was used during extraction:
+```json
+{
+  "pipeline": "direct_pdf",
+  ...
+}
+```
 
 ## Translation File Format
 
@@ -428,11 +612,16 @@ pdf_layout/
 └── pipelines/
     ├── __init__.py
     ├── base.py            # Pipeline base classes
-    ├── direct_pdf.py      # Direct PDF pipeline
+    ├── direct_pdf.py      # Direct PDF pipeline (fastest, Unicode)
     ├── office_roundtrip.py # Office conversion pipeline
-    ├── office_xml.py      # Office XML handlers
+    ├── office_cat.py      # Office + CAT format pipeline
+    ├── office_xml.py      # Office XML handlers (DOCX/PPTX/XLSX)
     ├── docx_roundtrip.py  # Legacy DOCX pipeline
-    └── xliff_format.py    # XLIFF export pipeline
+    ├── xliff_format.py    # XLIFF export pipeline
+    ├── pikepdf_lowlevel.py # Low-level PDF stream pipeline (fastest, Latin-only)
+    └── html_intermediate.py # HTML intermediate pipeline (visual preview)
+utils/
+├── font_utils.py          # Font mapping/metrics
 tests/
 ├── test_roundtrip.py      # Comprehensive tests
 main.py                    # CLI entry point
@@ -440,13 +629,16 @@ main.py                    # CLI entry point
 
 ## Dependencies
 
-| Package | Purpose | Required |
-|---------|---------|----------|
-| PyMuPDF | PDF processing | ✅ |
-| pdf2docx | PDF → DOCX conversion | Office pipeline |
-| python-pptx | PPTX handling | Office pipeline |
-| openpyxl | XLSX handling | Office pipeline |
-| LibreOffice | Office → PDF conversion | Office pipeline |
+| Package | Purpose | Required For |
+|---------|---------|-------------|
+| PyMuPDF | PDF processing, text extraction | ✅ Core (all pipelines) |
+| pdf2docx | PDF → DOCX conversion | `--pipeline office`, `--pipeline cat` |
+| python-pptx | PowerPoint handling | `--pipeline office`, `--pipeline cat` |
+| openpyxl | Excel handling | `--pipeline office`, `--pipeline cat` |
+| translate-toolkit | XLIFF/TMX compliance | `--pipeline xliff` (OASIS standard) |
+| pikepdf | Low-level PDF manipulation | `--pipeline pikepdf` |
+| LibreOffice | Office → PDF conversion | `--pipeline office`, `--pipeline cat` |
+| weasyprint | HTML → PDF (optional) | `--pipeline html` (optional, falls back to PyMuPDF) |
 
 ## Testing
 
